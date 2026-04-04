@@ -42,6 +42,7 @@ const expenseSchema = z.object({
 });
 
 class ExpenseValidationError extends Error {}
+const EXPENSE_DATE_ERROR = "Expense date must be a real calendar date in YYYY-MM-DD format.";
 
 type CreateAppOptions = {
   store: Store;
@@ -74,6 +75,30 @@ function serializeExpense(expense: GroupExpense) {
     createdAt: expense.createdAt.toISOString(),
     updatedAt: expense.updatedAt.toISOString()
   };
+}
+
+function parseExpenseDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!match) {
+    throw new ExpenseValidationError(EXPENSE_DATE_ERROR);
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    throw new ExpenseValidationError(EXPENSE_DATE_ERROR);
+  }
+
+  return parsed;
 }
 
 export function createApp({
@@ -433,16 +458,17 @@ export function createApp({
         return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
       }
 
-      try {
-        const normalizedPayers = await validateExpensePayers(request.params.groupId, parsed.data.payers);
+    try {
+      const expenseDate = parseExpenseDate(parsed.data.expenseDate);
+      const normalizedPayers = await validateExpensePayers(request.params.groupId, parsed.data.payers);
 
-        const expense = await store.createExpense({
-          groupId: request.params.groupId,
-          createdByUserId: user.id,
-          title: parsed.data.title.trim(),
-          expenseDate: new Date(`${parsed.data.expenseDate}T00:00:00.000Z`),
-          payers: normalizedPayers
-        });
+      const expense = await store.createExpense({
+        groupId: request.params.groupId,
+        createdByUserId: user.id,
+        title: parsed.data.title.trim(),
+        expenseDate,
+        payers: normalizedPayers
+      });
 
         return response.status(201).json({ expense: serializeExpense(expense) });
       } catch (error) {
@@ -477,15 +503,16 @@ export function createApp({
         return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
       }
 
-      try {
-        const normalizedPayers = await validateExpensePayers(expense.groupId, parsed.data.payers);
+    try {
+      const expenseDate = parseExpenseDate(parsed.data.expenseDate);
+      const normalizedPayers = await validateExpensePayers(expense.groupId, parsed.data.payers);
 
-        const updatedExpense = await store.updateExpense({
-          expenseId: expense.id,
-          title: parsed.data.title.trim(),
-          expenseDate: new Date(`${parsed.data.expenseDate}T00:00:00.000Z`),
-          payers: normalizedPayers
-        });
+      const updatedExpense = await store.updateExpense({
+        expenseId: expense.id,
+        title: parsed.data.title.trim(),
+        expenseDate,
+        payers: normalizedPayers
+      });
 
         if (!updatedExpense) {
           return response.status(404).json({ error: "Expense not found." });

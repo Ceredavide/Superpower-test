@@ -166,6 +166,64 @@ describe("expense routes", () => {
     expect(zeroAmount.body.error).toBe("Amounts must be positive numbers with up to 2 decimal places.");
   });
 
+  test("rejects impossible expense dates on create and update", async () => {
+    const app = createApp({ store: new InMemoryStore() });
+    const owner = await registerMember(app, "owner@example.com", "Morgan");
+    const member = await registerMember(app, "member@example.com", "Avery");
+    const groupId = await createGroup(app, owner.cookie, "Lake Trip");
+
+    await request(app)
+      .post(`/groups/${groupId}/invitations`)
+      .set("Cookie", owner.cookie)
+      .send({ identifier: "Avery" });
+
+    const invitations = await request(app).get("/invitations").set("Cookie", member.cookie);
+
+    await request(app)
+      .post(`/invitations/${invitations.body.invitations[0].id}/accept`)
+      .set("Cookie", member.cookie);
+
+    for (const expenseDate of ["2026-02-31", "2026-13-01"]) {
+      const createResponse = await request(app)
+        .post(`/groups/${groupId}/expenses`)
+        .set("Cookie", owner.cookie)
+        .send({
+          title: "Invalid date expense",
+          expenseDate,
+          payers: [{ userId: owner.userId, amountPaid: "10.00" }]
+        });
+
+      expect(createResponse.status).toBe(400);
+      expect(createResponse.body.error).toBe(
+        "Expense date must be a real calendar date in YYYY-MM-DD format."
+      );
+    }
+
+    const createExpense = await request(app)
+      .post(`/groups/${groupId}/expenses`)
+      .set("Cookie", owner.cookie)
+      .send({
+        title: "Valid expense",
+        expenseDate: "2026-04-07",
+        payers: [{ userId: owner.userId, amountPaid: "42.00" }]
+      });
+
+    const expenseId = createExpense.body.expense.id as string;
+
+    for (const expenseDate of ["2026-02-31", "2026-13-01"]) {
+      const updateResponse = await request(app).patch(`/expenses/${expenseId}`).set("Cookie", owner.cookie).send({
+        title: "Still valid title",
+        expenseDate,
+        payers: [{ userId: owner.userId, amountPaid: "42.00" }]
+      });
+
+      expect(updateResponse.status).toBe(400);
+      expect(updateResponse.body.error).toBe(
+        "Expense date must be a real calendar date in YYYY-MM-DD format."
+      );
+    }
+  });
+
   test("allows only the creator to edit or delete an expense", async () => {
     const app = createApp({ store: new InMemoryStore() });
     const owner = await registerMember(app, "owner@example.com", "Morgan");
