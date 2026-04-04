@@ -1,4 +1,4 @@
-import type { GroupDetail, GroupSummary, Invitation, User } from "./types";
+import type { ExpensePayload, GroupDetail, GroupExpense, GroupSummary, Invitation, User } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
@@ -87,6 +87,26 @@ export const api = {
   declineInvitation(invitationId: string) {
     return request<{ invitation: { id: string } }>(`/invitations/${invitationId}/decline`, {
       method: "POST"
+    });
+  },
+  listExpenses(groupId: string) {
+    return request<{ expenses: GroupExpense[] }>(`/groups/${groupId}/expenses`);
+  },
+  createExpense(groupId: string, payload: ExpensePayload) {
+    return request<{ expense: GroupExpense }>(`/groups/${groupId}/expenses`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  updateExpense(expenseId: string, payload: ExpensePayload) {
+    return request<{ expense: GroupExpense }>(`/expenses/${expenseId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+  },
+  deleteExpense(expenseId: string) {
+    return request<void>(`/expenses/${expenseId}`, {
+      method: "DELETE"
     });
   }
 };

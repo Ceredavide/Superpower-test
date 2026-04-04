@@ -22,6 +22,29 @@ export type GroupDetail = GroupSummary & {
   }>;
 };
 
+export type GroupExpense = {
+  id: string;
+  groupId: string;
+  title: string;
+  expenseDate: string;
+  totalAmount: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
+  payers: Array<{
+    user: {
+      id: string;
+      email: string;
+      displayName: string | null;
+    };
+    amountPaid: string;
+  }>;
+};
+
 export type Invitation = {
   id: string;
   status: "pending";
@@ -36,4 +59,13 @@ export type Invitation = {
     email: string;
     displayName: string | null;
   };
+};
+
+export type ExpensePayload = {
+  title: string;
+  expenseDate: string;
+  payers: Array<{
+    userId: string;
+    amountPaid: string;
+  }>;
 };

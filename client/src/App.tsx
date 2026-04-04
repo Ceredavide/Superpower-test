@@ -11,6 +11,7 @@ import {
 } from "react-router-dom";
 
 import { api, ApiError } from "./api";
+import { GroupExpensesSection } from "./components/group-expenses-section";
 import type { GroupDetail, GroupSummary, Invitation, User } from "./types";
 
 type SessionState = {
@@ -453,6 +454,7 @@ function DashboardPage({ session, onUserChange }: AppRouteProps) {
 function GroupPage({ session, onUserChange }: AppRouteProps) {
   const { groupId = "" } = useParams();
   const location = useLocation();
+  const currentUserId = session.user?.id ?? "";
   const [group, setGroup] = useState<GroupDetail | null>(null);
   const [inviteIdentifier, setInviteIdentifier] = useState("");
   const [error, setError] = useState("");
@@ -561,6 +563,8 @@ function GroupPage({ session, onUserChange }: AppRouteProps) {
                   {successMessage ? <p className="form-success">{successMessage}</p> : null}
                 </section>
               ) : null}
+
+              <GroupExpensesSection currentUserId={currentUserId} group={group} />
             </>
           ) : null}
         </div>

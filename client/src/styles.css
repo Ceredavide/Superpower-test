@@ -91,6 +91,9 @@ a {
 .auth-panel {
   padding: 32px;
   align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
 .eyebrow {
@@ -324,6 +327,68 @@ h2 {
   gap: 6px;
 }
 
+.expense-section,
+.expense-form,
+.expense-card,
+.expense-card-header,
+.payer-breakdown {
+  display: flex;
+}
+
+.expense-section,
+.expense-form,
+.expense-card {
+  flex-direction: column;
+}
+
+.expense-section,
+.expense-form {
+  gap: 18px;
+}
+
+.payer-row {
+  display: flex;
+  gap: 16px;
+  align-items: end;
+}
+
+.payer-row .field {
+  flex: 1;
+}
+
+.payer-row select {
+  min-height: 54px;
+}
+
+.expense-total-chip {
+  padding: 10px 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  background: rgba(255, 248, 240, 0.92);
+}
+
+.expense-card {
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  background: rgba(255, 248, 240, 0.9);
+}
+
+.expense-card-header {
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.payer-breakdown {
+  margin: 0;
+  padding-left: 20px;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+}
+
 @media (max-width: 960px) {
   .auth-layout,
   .dashboard-grid {
@@ -336,6 +401,13 @@ h2 {
 
   .topbar {
     align-items: start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 720px) {
+  .payer-row,
+  .expense-card-header {
     flex-direction: column;
   }
 }
