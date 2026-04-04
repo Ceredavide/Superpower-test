@@ -9,11 +9,21 @@ type ExpenseDraft = {
   payers: Array<{ userId: string; amountPaid: string }>;
 };
 
-function createEmptyDraft(group: GroupDetail): ExpenseDraft {
+function getDefaultPayerUserId(group: GroupDetail, currentUserId: string) {
+  return group.members.some((member) => member.id === currentUserId)
+    ? currentUserId
+    : group.members[0]?.id ?? "";
+}
+
+function createPayerDraft(group: GroupDetail, currentUserId: string) {
+  return { userId: getDefaultPayerUserId(group, currentUserId), amountPaid: "" };
+}
+
+function createEmptyDraft(group: GroupDetail, currentUserId: string): ExpenseDraft {
   return {
     title: "",
     expenseDate: "",
-    payers: [{ userId: group.members[0]?.id ?? "", amountPaid: "" }]
+    payers: [createPayerDraft(group, currentUserId)]
   };
 }
 
@@ -52,7 +62,7 @@ export function GroupExpensesSection({
   currentUserId: string;
 }) {
   const [expenses, setExpenses] = useState<GroupExpense[]>([]);
-  const [draft, setDraft] = useState<ExpenseDraft>(() => createEmptyDraft(group));
+  const [draft, setDraft] = useState<ExpenseDraft>(() => createEmptyDraft(group, currentUserId));
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -75,9 +85,9 @@ export function GroupExpensesSection({
 
   useEffect(() => {
     void loadExpenses();
-    setDraft(createEmptyDraft(group));
+    setDraft(createEmptyDraft(group, currentUserId));
     setEditingExpenseId(null);
-  }, [group.id]);
+  }, [group.id, currentUserId]);
 
   const liveTotal = calculateDraftTotal(draft.payers);
 
@@ -93,13 +103,26 @@ export function GroupExpensesSection({
   function addPayer() {
     setDraft((current) => ({
       ...current,
-      payers: [...current.payers, { userId: group.members[0]?.id ?? "", amountPaid: "" }]
+      payers: [...current.payers, createPayerDraft(group, currentUserId)]
     }));
+  }
+
+  function removePayer(index: number) {
+    setDraft((current) => {
+      if (current.payers.length === 1) {
+        return current;
+      }
+
+      return {
+        ...current,
+        payers: current.payers.filter((_, payerIndex) => payerIndex !== index)
+      };
+    });
   }
 
   function resetForm() {
     setEditingExpenseId(null);
-    setDraft(createEmptyDraft(group));
+    setDraft(createEmptyDraft(group, currentUserId));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -211,6 +234,14 @@ export function GroupExpensesSection({
                 onChange={(event) => updatePayer(index, "amountPaid", event.target.value)}
               />
             </label>
+            <button
+              className="secondary-button"
+              disabled={draft.payers.length === 1}
+              onClick={() => removePayer(index)}
+              type="button"
+            >
+              Remove payer
+            </button>
           </div>
         ))}
 
