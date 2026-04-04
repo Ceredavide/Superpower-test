@@ -24,12 +24,14 @@ export function moneyToCents(value: string) {
 }
 
 export function centsToMoney(cents: number) {
-  const whole = Math.floor(cents / 100);
-  const fraction = Math.abs(cents % 100)
+  const isNegative = cents < 0;
+  const absoluteCents = Math.abs(cents);
+  const whole = Math.floor(absoluteCents / 100);
+  const fraction = (absoluteCents % 100)
     .toString()
     .padStart(2, "0");
 
-  return `${whole}.${fraction}`;
+  return `${isNegative ? "-" : ""}${whole}.${fraction}`;
 }
 
 export function sumMoney(values: string[]) {

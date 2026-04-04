@@ -42,6 +42,75 @@ export type GroupSummary = {
   updatedAt: Date;
 };
 
+export type MembershipStatus = "active" | "inactive";
+
+export type ExpenseCategory = "food" | "transport" | "housing" | "entertainment" | "other";
+
+export type ExpenseSplitMode = "equal" | "percentage" | "exact";
+
+export type LedgerAmount = {
+  userId: string;
+  amountCents: number;
+};
+
+export type LedgerBalance = {
+  userId: string;
+  balanceCents: number;
+};
+
+export type LedgerSettlement = {
+  id: string;
+  groupId: string;
+  fromUserId: string;
+  toUserId: string;
+  amount: string;
+  paidAt: Date;
+  createdByUserId: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type LedgerSettlementSuggestion = {
+  fromUserId: string;
+  toUserId: string;
+  amountCents: number;
+};
+
+export type LedgerMember = {
+  id: string;
+  email: string;
+  displayName: string | null;
+  status: MembershipStatus;
+  leftAt: Date | null;
+};
+
+export type LedgerExpenseShare = {
+  userId: string;
+  amountOwed: string;
+};
+
+export type LedgerExpense = {
+  id: string;
+  groupId: string;
+  title: string;
+  category: ExpenseCategory;
+  splitMode: ExpenseSplitMode;
+  expenseDate: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  payers: LedgerAmount[];
+  shares: LedgerExpenseShare[];
+};
+
+export type GroupLedger = {
+  groupId: string;
+  members: LedgerMember[];
+  expenses: LedgerExpense[];
+  balances: LedgerBalance[];
+  settleUpSuggestions: LedgerSettlementSuggestion[];
+  settlements: LedgerSettlement[];
+};
+
 export type GroupDetail = GroupSummary & {
   members: Array<{
     id: string;
@@ -106,6 +175,8 @@ export type GroupExpense = {
   id: string;
   groupId: string;
   title: string;
+  category?: ExpenseCategory;
+  splitMode?: ExpenseSplitMode;
   expenseDate: Date;
   createdAt: Date;
   updatedAt: Date;
