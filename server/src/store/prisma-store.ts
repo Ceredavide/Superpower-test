@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 
+import { normalizeExpenseShares } from "../lib/ledger";
 import { normalizeMoneyInput, sumMoney } from "../lib/money";
 import type {
   CreateExpenseInput,
@@ -22,6 +23,14 @@ import type {
 const expenseInclude = {
   createdBy: true,
   payers: {
+    include: {
+      user: true
+    },
+    orderBy: {
+      id: "asc"
+    }
+  },
+  shares: {
     include: {
       user: true
     },
@@ -60,6 +69,8 @@ function toGroupExpense(expense: ExpenseWithRelations): GroupExpense {
     id: expense.id,
     groupId: expense.groupId,
     title: expense.title,
+    category: expense.category,
+    splitMode: expense.splitMode,
     expenseDate: expense.expenseDate,
     createdAt: expense.createdAt,
     updatedAt: expense.updatedAt,
@@ -78,6 +89,29 @@ function toGroupExpense(expense: ExpenseWithRelations): GroupExpense {
       amountPaid: payer.amountPaid.toFixed(2)
     }))
   };
+}
+
+function hasSplitDetails(
+  input: CreateExpenseInput | UpdateExpenseInput | {
+    groupId: string;
+    createdByUserId: string;
+    title: string;
+    expenseDate: Date;
+    payers: Array<{ userId: string; amountPaid: string }>;
+  }
+): input is CreateExpenseInput | UpdateExpenseInput {
+  return "participants" in input;
+}
+
+function buildExpenseShareRows(input: CreateExpenseInput | UpdateExpenseInput, totalAmount: string) {
+  return normalizeExpenseShares({
+    splitMode: input.splitMode,
+    total: totalAmount,
+    participants: input.participants
+  }).map((share) => ({
+    userId: share.userId,
+    amount: new Decimal(normalizeMoneyInput(share.amount))
+  }));
 }
 
 export class PrismaStore implements Store {
@@ -155,7 +189,9 @@ export class PrismaStore implements Store {
         data: {
           groupId: createdGroup.id,
           userId: ownerId,
-          role: "owner"
+          role: "owner",
+          status: "active",
+          leftAt: null
         }
       });
 
@@ -174,7 +210,10 @@ export class PrismaStore implements Store {
 
   async listGroupsForUser(userId: string): Promise<GroupSummary[]> {
     const memberships = await this.prisma.groupMembership.findMany({
-      where: { userId },
+      where: {
+        userId,
+        status: "active"
+      },
       include: {
         group: true
       },
@@ -201,12 +240,11 @@ export class PrismaStore implements Store {
   }
 
   async getGroupDetail(groupId: string, viewerUserId: string): Promise<GroupDetail | null> {
-    const membership = await this.prisma.groupMembership.findUnique({
+    const membership = await this.prisma.groupMembership.findFirst({
       where: {
-        groupId_userId: {
-          groupId,
-          userId: viewerUserId
-        }
+        groupId,
+        userId: viewerUserId,
+        status: "active"
       },
       include: {
         group: {
@@ -214,6 +252,9 @@ export class PrismaStore implements Store {
             memberships: {
               include: {
                 user: true
+              },
+              where: {
+                status: "active"
               },
               orderBy: {
                 createdAt: "asc"
@@ -256,7 +297,8 @@ export class PrismaStore implements Store {
       where: {
         groupId,
         userId,
-        role: "owner"
+        role: "owner",
+        status: "active"
       }
     });
 
@@ -267,7 +309,8 @@ export class PrismaStore implements Store {
     const count = await this.prisma.groupMembership.count({
       where: {
         groupId,
-        userId
+        userId,
+        status: "active"
       }
     });
 
@@ -383,7 +426,9 @@ export class PrismaStore implements Store {
         create: {
           groupId: invitation.groupId,
           userId,
-          role: "member"
+          role: "member",
+          status: "active",
+          leftAt: null
         },
         update: {}
       });
@@ -424,10 +469,18 @@ export class PrismaStore implements Store {
   }
 
   async createExpense(input: CreateExpenseInput): Promise<GroupExpense> {
+    const totalAmount = sumMoney(input.payers.map((payer) => payer.amountPaid));
+    const richInput = hasSplitDetails(input);
     const expense = await this.prisma.expense.create({
       data: {
         groupId: input.groupId,
         title: input.title,
+        ...(richInput
+          ? {
+              category: input.category,
+              splitMode: input.splitMode
+            }
+          : {}),
         expenseDate: input.expenseDate,
         createdByUserId: input.createdByUserId,
         payers: {
@@ -435,7 +488,14 @@ export class PrismaStore implements Store {
             userId: payer.userId,
             amountPaid: new Decimal(normalizeMoneyInput(payer.amountPaid))
           }))
-        }
+        },
+        ...(richInput
+          ? {
+              shares: {
+                create: buildExpenseShareRows(input, totalAmount)
+              }
+            }
+          : {})
       },
       include: expenseInclude
     });
@@ -471,23 +531,59 @@ export class PrismaStore implements Store {
       return null;
     }
 
+    const totalAmount = sumMoney(input.payers.map((payer) => payer.amountPaid));
+    const richInput = hasSplitDetails(input);
     const expense = await this.prisma.expense.update({
       where: { id: input.expenseId },
       data: {
         title: input.title,
         expenseDate: input.expenseDate,
+        ...(richInput
+          ? {
+              category: input.category,
+              splitMode: input.splitMode
+            }
+          : {}),
         payers: {
           deleteMany: {},
           create: input.payers.map((payer) => ({
             userId: payer.userId,
             amountPaid: new Decimal(normalizeMoneyInput(payer.amountPaid))
           }))
-        }
+        },
+        ...(richInput
+          ? {
+              shares: {
+                deleteMany: {},
+                create: buildExpenseShareRows(input, totalAmount)
+              }
+            }
+          : {})
       },
       include: expenseInclude
     });
 
     return toGroupExpense(expense);
+  }
+
+  createSettlement(input: {
+    groupId: string;
+    fromUserId: string;
+    toUserId: string;
+    amount: string;
+    paidAt: Date;
+    createdByUserId: string;
+  }) {
+    return this.prisma.settlement.create({
+      data: {
+        groupId: input.groupId,
+        fromUserId: input.fromUserId,
+        toUserId: input.toUserId,
+        amount: new Decimal(normalizeMoneyInput(input.amount)),
+        paidAt: input.paidAt,
+        createdByUserId: input.createdByUserId
+      }
+    });
   }
 
   async deleteExpense(expenseId: string): Promise<boolean> {

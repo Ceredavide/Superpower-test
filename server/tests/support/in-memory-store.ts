@@ -14,6 +14,7 @@ import type {
   UpdateDisplayNameInput,
   UpdateExpenseInput
 } from "../../src/store/types";
+import { normalizeExpenseShares } from "../../src/lib/ledger";
 import { sumMoney } from "../../src/lib/money";
 
 type StoredGroup = {
@@ -29,6 +30,8 @@ type StoredMembership = {
   groupId: string;
   userId: string;
   role: "owner" | "member";
+  status: "active" | "inactive";
+  leftAt: Date | null;
   createdAt: Date;
 };
 
@@ -46,6 +49,8 @@ type StoredExpense = {
   id: string;
   groupId: string;
   title: string;
+  category: "food" | "transport" | "housing" | "entertainment" | "other";
+  splitMode: "equal" | "percentage" | "exact";
   expenseDate: Date;
   createdByUserId: string;
   createdAt: Date;
@@ -59,8 +64,39 @@ type StoredExpensePayer = {
   amountPaid: string;
 };
 
+type StoredExpenseShare = {
+  id: string;
+  expenseId: string;
+  userId: string;
+  amount: string;
+};
+
+type StoredSettlement = {
+  id: string;
+  groupId: string;
+  fromUserId: string;
+  toUserId: string;
+  amount: string;
+  paidAt: Date;
+  createdByUserId: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 function createId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function hasSplitDetails(
+  input: CreateExpenseInput | UpdateExpenseInput | {
+    groupId: string;
+    createdByUserId: string;
+    title: string;
+    expenseDate: Date;
+    payers: Array<{ userId: string; amountPaid: string }>;
+  }
+): input is CreateExpenseInput | UpdateExpenseInput {
+  return "participants" in input;
 }
 
 export class InMemoryStore implements Store {
@@ -71,6 +107,8 @@ export class InMemoryStore implements Store {
   private invitations: StoredInvitation[] = [];
   private expenses: StoredExpense[] = [];
   private expensePayers: StoredExpensePayer[] = [];
+  private expenseShares: StoredExpenseShare[] = [];
+  private settlements: StoredSettlement[] = [];
 
   supportsExpenses() {
     return true;
@@ -155,6 +193,8 @@ export class InMemoryStore implements Store {
       groupId: group.id,
       userId: ownerId,
       role: "owner",
+      status: "active",
+      leftAt: null,
       createdAt: now
     };
 
@@ -173,7 +213,7 @@ export class InMemoryStore implements Store {
 
   async listGroupsForUser(userId: string): Promise<GroupSummary[]> {
     return this.memberships
-      .filter((membership) => membership.userId === userId)
+      .filter((membership) => membership.userId === userId && membership.status === "active")
       .map((membership) => {
         const group = this.groups.find((entry) => entry.id === membership.groupId)!;
 
@@ -190,7 +230,8 @@ export class InMemoryStore implements Store {
 
   async getGroupDetail(groupId: string, viewerUserId: string): Promise<GroupDetail | null> {
     const membership = this.memberships.find(
-      (entry) => entry.groupId === groupId && entry.userId === viewerUserId
+      (entry) =>
+        entry.groupId === groupId && entry.userId === viewerUserId && entry.status === "active"
     );
     const group = this.groups.find((entry) => entry.id === groupId);
 
@@ -199,7 +240,7 @@ export class InMemoryStore implements Store {
     }
 
     const members = this.memberships
-      .filter((entry) => entry.groupId === groupId)
+      .filter((entry) => entry.groupId === groupId && entry.status === "active")
       .map((entry) => {
         const user = this.users.find((candidate) => candidate.id === entry.userId)!;
 
@@ -225,13 +266,19 @@ export class InMemoryStore implements Store {
   async isGroupOwner(groupId: string, userId: string) {
     return this.memberships.some(
       (membership) =>
-        membership.groupId === groupId && membership.userId === userId && membership.role === "owner"
+        membership.groupId === groupId &&
+        membership.userId === userId &&
+        membership.role === "owner" &&
+        membership.status === "active"
     );
   }
 
   async isGroupMember(groupId: string, userId: string) {
     return this.memberships.some(
-      (membership) => membership.groupId === groupId && membership.userId === userId
+      (membership) =>
+        membership.groupId === groupId &&
+        membership.userId === userId &&
+        membership.status === "active"
     );
   }
 
@@ -316,6 +363,8 @@ export class InMemoryStore implements Store {
         groupId: invitation.groupId,
         userId,
         role: "member",
+        status: "active",
+        leftAt: null,
         createdAt: new Date()
       });
     }
@@ -357,6 +406,8 @@ export class InMemoryStore implements Store {
       id: expense.id,
       groupId: expense.groupId,
       title: expense.title,
+      category: expense.category,
+      splitMode: expense.splitMode,
       expenseDate: expense.expenseDate,
       createdAt: expense.createdAt,
       updatedAt: expense.updatedAt,
@@ -379,10 +430,14 @@ export class InMemoryStore implements Store {
 
   async createExpense(input: CreateExpenseInput): Promise<GroupExpense> {
     const now = new Date();
+    const richInput = hasSplitDetails(input);
+    const totalAmount = sumMoney(input.payers.map((payer) => payer.amountPaid));
     const expense: StoredExpense = {
       id: createId("expense"),
       groupId: input.groupId,
       title: input.title,
+      category: richInput ? input.category : "other",
+      splitMode: richInput ? input.splitMode : "equal",
       expenseDate: input.expenseDate,
       createdByUserId: input.createdByUserId,
       createdAt: now,
@@ -398,6 +453,20 @@ export class InMemoryStore implements Store {
         amountPaid: payer.amountPaid
       }))
     );
+    if (richInput) {
+      this.expenseShares.push(
+        ...normalizeExpenseShares({
+          splitMode: input.splitMode,
+          total: totalAmount,
+          participants: input.participants
+        }).map((share) => ({
+          id: createId("expense_share"),
+          expenseId: expense.id,
+          userId: share.userId,
+          amount: share.amount
+        }))
+      );
+    }
 
     return this.materializeExpense(expense);
   }
@@ -424,8 +493,14 @@ export class InMemoryStore implements Store {
       return null;
     }
 
+    const richInput = hasSplitDetails(input);
+    const totalAmount = sumMoney(input.payers.map((payer) => payer.amountPaid));
     expense.title = input.title;
     expense.expenseDate = input.expenseDate;
+    if (richInput) {
+      expense.category = input.category;
+      expense.splitMode = input.splitMode;
+    }
     expense.updatedAt = new Date();
     this.expensePayers = this.expensePayers.filter((entry) => entry.expenseId !== expense.id);
     this.expensePayers.push(
@@ -436,8 +511,47 @@ export class InMemoryStore implements Store {
         amountPaid: payer.amountPaid
       }))
     );
+    this.expenseShares = this.expenseShares.filter((entry) => entry.expenseId !== expense.id);
+    if (richInput) {
+      this.expenseShares.push(
+        ...normalizeExpenseShares({
+          splitMode: input.splitMode,
+          total: totalAmount,
+          participants: input.participants
+        }).map((share) => ({
+          id: createId("expense_share"),
+          expenseId: expense.id,
+          userId: share.userId,
+          amount: share.amount
+        }))
+      );
+    }
 
     return this.materializeExpense(expense);
+  }
+
+  createSettlement(input: {
+    groupId: string;
+    fromUserId: string;
+    toUserId: string;
+    amount: string;
+    paidAt: Date;
+    createdByUserId: string;
+  }) {
+    const settlement: StoredSettlement = {
+      id: createId("settlement"),
+      groupId: input.groupId,
+      fromUserId: input.fromUserId,
+      toUserId: input.toUserId,
+      amount: input.amount,
+      paidAt: input.paidAt,
+      createdByUserId: input.createdByUserId,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    this.settlements.push(settlement);
+    return settlement;
   }
 
   async deleteExpense(expenseId: string): Promise<boolean> {
