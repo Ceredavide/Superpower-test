@@ -261,7 +261,7 @@ export interface Store {
   findExpenseById(expenseId: string): Promise<GroupExpense | null>;
   updateExpense(input: UpdateExpenseInput | LegacyUpdateExpenseInput): Promise<GroupExpense | null>;
   createSettlement(input: CreateSettlementInput): Promise<LedgerSettlement>;
-  removeGroupMember(groupId: string, memberId: string): Promise<LedgerMember | null>;
+  removeGroupMember(groupId: string, memberId: string): Promise<GroupDetail | null>;
   deleteExpense(expenseId: string): Promise<boolean>;
   isExpenseCreator(expenseId: string, userId: string): Promise<boolean>;
 }

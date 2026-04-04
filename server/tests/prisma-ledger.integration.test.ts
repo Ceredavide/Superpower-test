@@ -13,6 +13,7 @@ maybeDescribe("Prisma ledger persistence integration", () => {
 
   let ownerId = "";
   let memberId = "";
+  let departedId = "";
   let groupId = "";
 
   beforeAll(async () => {
@@ -32,8 +33,13 @@ maybeDescribe("Prisma ledger persistence integration", () => {
       await prisma.user.deleteMany({ where: { id: memberId } });
     }
 
+    if (departedId) {
+      await prisma.user.deleteMany({ where: { id: departedId } });
+    }
+
     ownerId = "";
     memberId = "";
+    departedId = "";
     groupId = "";
   });
 
@@ -45,6 +51,7 @@ maybeDescribe("Prisma ledger persistence integration", () => {
     const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     ownerId = `owner_${uniqueSuffix}`;
     memberId = `member_${uniqueSuffix}`;
+    departedId = `departed_${uniqueSuffix}`;
 
     await prisma.user.createMany({
       data: [
@@ -61,6 +68,13 @@ maybeDescribe("Prisma ledger persistence integration", () => {
           passwordHash: "hash",
           displayName: "Avery",
           displayNameNormalized: `avery_${uniqueSuffix}`
+        },
+        {
+          id: departedId,
+          email: `${departedId}@example.com`,
+          passwordHash: "hash",
+          displayName: "Rowan",
+          displayNameNormalized: `rowan_${uniqueSuffix}`
         }
       ]
     });
@@ -86,6 +100,11 @@ maybeDescribe("Prisma ledger persistence integration", () => {
           groupId,
           userId: memberId,
           role: "member"
+        },
+        {
+          groupId,
+          userId: departedId,
+          role: "member"
         }
       ]
     });
@@ -99,11 +118,12 @@ maybeDescribe("Prisma ledger persistence integration", () => {
       splitMode: "equal",
       participants: [
         { userId: ownerId, included: true },
-        { userId: memberId, included: true }
+        { userId: memberId, included: true },
+        { userId: departedId, included: true }
       ],
       payers: [
-        { userId: ownerId, amountPaid: "12.50" },
-        { userId: memberId, amountPaid: "7.50" }
+        { userId: ownerId, amountPaid: "12.00" },
+        { userId: departedId, amountPaid: "18.00" }
       ]
     });
 
@@ -120,6 +140,7 @@ maybeDescribe("Prisma ledger persistence integration", () => {
         .map((share) => [share.userId, share.amount.toFixed(2)])
         .sort((left, right) => left[0].localeCompare(right[0]))
     ).toEqual([
+      [departedId, "10.00"],
       [memberId, "10.00"],
       [ownerId, "10.00"]
     ]);
@@ -131,12 +152,13 @@ maybeDescribe("Prisma ledger persistence integration", () => {
       category: "transport",
       splitMode: "exact",
       participants: [
-        { userId: ownerId, included: true, amountOwed: "8.00" },
-        { userId: memberId, included: true, amountOwed: "12.00" }
+        { userId: ownerId, included: true, amountOwed: "6.00" },
+        { userId: memberId, included: true, amountOwed: "12.00" },
+        { userId: departedId, included: true, amountOwed: "12.00" }
       ],
       payers: [
-        { userId: ownerId, amountPaid: "15.00" },
-        { userId: memberId, amountPaid: "5.00" }
+        { userId: ownerId, amountPaid: "18.00" },
+        { userId: departedId, amountPaid: "12.00" }
       ]
     });
 
@@ -154,8 +176,9 @@ maybeDescribe("Prisma ledger persistence integration", () => {
         .map((share) => [share.userId, share.amount.toFixed(2)])
         .sort((left, right) => left[0].localeCompare(right[0]))
     ).toEqual([
+      [departedId, "12.00"],
       [memberId, "12.00"],
-      [ownerId, "8.00"]
+      [ownerId, "6.00"]
     ]);
 
     const settlement = await store.createSettlement({
@@ -189,18 +212,31 @@ maybeDescribe("Prisma ledger persistence integration", () => {
       createdByUserId: ownerId
     });
 
-    const removedMember = await store.removeGroupMember(groupId, memberId);
+    const removedGroup = await store.removeGroupMember(groupId, departedId);
 
-    expect(removedMember).toMatchObject({
-      id: memberId,
-      status: "inactive"
+    expect(removedGroup).toMatchObject({
+      id: groupId
     });
+    expect(removedGroup?.members.map((member) => member.id)).toEqual([ownerId, memberId]);
 
     const ledger = await store.getLedger(groupId, ownerId);
 
-    expect(ledger?.members.find((member) => member.id === memberId)).toMatchObject({
-      status: "inactive"
-    });
-    expect(await store.isGroupMember(groupId, memberId)).toBe(false);
+    expect(ledger?.members.map((member) => member.id)).toEqual([ownerId, memberId]);
+    expect(ledger?.balances).toEqual([
+      { userId: ownerId, balance: "14.50" },
+      { userId: memberId, balance: "-14.50" }
+    ]);
+    expect(ledger?.settleUpSuggestions).toEqual([
+      { fromUserId: memberId, toUserId: ownerId, amount: "14.50" }
+    ]);
+    expect(ledger?.expenses[0].payers.map((payer) => [payer.userId, payer.amount])).toEqual([
+      [ownerId, "24.00"],
+      [memberId, "6.00"]
+    ]);
+    expect(ledger?.expenses[0].shares.map((share) => [share.userId, share.amount])).toEqual([
+      [ownerId, "12.00"],
+      [memberId, "18.00"]
+    ]);
+    expect(await store.isGroupMember(groupId, departedId)).toBe(false);
   });
 });

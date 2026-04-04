@@ -1,7 +1,12 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 
-import { deriveBalances, normalizeExpenseShares, suggestSettlements } from "../lib/ledger";
+import {
+  deriveBalances,
+  normalizeExpenseShares,
+  redistributeDepartedMemberExpense,
+  suggestSettlements
+} from "../lib/ledger";
 import { normalizeMoneyInput, sumMoney } from "../lib/money";
 import type {
   CreateSettlementInput,
@@ -47,6 +52,12 @@ const expenseInclude = {
 
 type ExpenseWithRelations = Prisma.ExpenseGetPayload<{
   include: typeof expenseInclude;
+}>;
+
+type MembershipWithUser = Prisma.GroupMembershipGetPayload<{
+  include: {
+    user: true;
+  };
 }>;
 
 function toGroupSummary(entry: {
@@ -117,6 +128,29 @@ function toLedgerExpense(expense: ExpenseWithRelations): LedgerExpense {
   };
 }
 
+function redistributeExpenseForActiveRoster(
+  expense: LedgerExpense,
+  departedMemberships: MembershipWithUser[],
+  activeMemberIds: string[]
+): LedgerExpense {
+  return departedMemberships.reduce<LedgerExpense>((currentExpense, departedMembership) => {
+    const redistributed = redistributeDepartedMemberExpense(
+      {
+        payers: currentExpense.payers,
+        shares: currentExpense.shares
+      },
+      departedMembership.userId,
+      activeMemberIds
+    );
+
+    return {
+      ...currentExpense,
+      payers: redistributed.payers,
+      shares: redistributed.shares
+    };
+  }, expense);
+}
+
 function toLedgerMember(entry: {
   id: string;
   role: "owner" | "member";
@@ -158,6 +192,42 @@ function toLedgerSettlement(entry: {
     createdByUserId: entry.createdByUserId,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt
+  };
+}
+
+function toGroupDetailFromMemberships(
+  group: {
+    id: string;
+    name: string;
+    ownerId: string;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+  memberships: Array<{
+    role: "owner" | "member";
+    status: "active" | "inactive";
+    user: {
+      id: string;
+      email: string;
+      displayName: string | null;
+    };
+  }>
+): GroupDetail {
+  return {
+    id: group.id,
+    name: group.name,
+    ownerId: group.ownerId,
+    role: "owner",
+    createdAt: group.createdAt,
+    updatedAt: group.updatedAt,
+    members: memberships
+      .filter((membership) => membership.status === "active")
+      .map((membership) => ({
+        id: membership.user.id,
+        email: membership.user.email,
+        displayName: membership.user.displayName,
+        role: membership.role
+      }))
   };
 }
 
@@ -543,18 +613,6 @@ export class PrismaStore implements Store {
   }
 
   async getLedger(groupId: string, viewerUserId: string): Promise<GroupLedger | null> {
-    const membership = await this.prisma.groupMembership.findFirst({
-      where: {
-        groupId,
-        userId: viewerUserId,
-        status: "active"
-      }
-    });
-
-    if (!membership) {
-      return null;
-    }
-
     const [memberships, expenses, settlements] = await Promise.all([
       this.prisma.groupMembership.findMany({
         where: { groupId },
@@ -572,26 +630,60 @@ export class PrismaStore implements Store {
       })
     ]);
 
-    const ledgerExpenses = expenses.map(toLedgerExpense);
-    const balances = deriveBalances({
-      memberIds: memberships.map((entry) => entry.userId),
-      expenses: ledgerExpenses.map((expense) => ({
-        payers: expense.payers,
-        shares: expense.shares
-      })),
-      settlements: settlements.map((entry) => ({
-        fromUserId: entry.fromUserId,
-        toUserId: entry.toUserId,
-        amount: entry.amount.toFixed(2)
-      }))
-    });
+    const viewerMembership = memberships.find(
+      (entry) => entry.userId === viewerUserId && entry.status === "active"
+    );
+
+    if (!viewerMembership) {
+      return null;
+    }
+
+    const activeMemberships = memberships.filter((entry) => entry.status === "active");
+    const departedMemberships = memberships
+      .filter((entry) => entry.status === "inactive")
+      .sort((left, right) => {
+        const leftTime = left.leftAt?.getTime() ?? left.createdAt.getTime();
+        const rightTime = right.leftAt?.getTime() ?? right.createdAt.getTime();
+
+        return leftTime - rightTime;
+      });
+    const activeMemberIds = activeMemberships.map((entry) => entry.userId);
+    const ledgerExpenses = expenses
+      .map(toLedgerExpense)
+      .map((expense) =>
+        redistributeExpenseForActiveRoster(expense, departedMemberships, activeMemberIds)
+      );
+    const activeSettlements = settlements.filter(
+      (settlement) =>
+        activeMemberIds.includes(settlement.fromUserId) &&
+        activeMemberIds.includes(settlement.toUserId)
+    );
+    const balances =
+      activeMemberIds.length <= 1
+        ? activeMemberIds.map((userId) => ({
+            userId,
+            balance: "0.00"
+          }))
+        : deriveBalances({
+            memberIds: activeMemberIds,
+            expenses: ledgerExpenses.map((expense) => ({
+              payers: expense.payers,
+              shares: expense.shares
+            })),
+            settlements: activeSettlements.map((entry) => ({
+              fromUserId: entry.fromUserId,
+              toUserId: entry.toUserId,
+              amount: entry.amount.toFixed(2)
+            }))
+          });
 
     return {
       groupId,
-      members: memberships.map(toLedgerMember),
+      members: activeMemberships.map(toLedgerMember),
       expenses: ledgerExpenses,
       balances,
-      settleUpSuggestions: suggestSettlements(balances),
+      settleUpSuggestions:
+        activeMemberIds.length <= 1 ? [] : suggestSettlements(balances),
       settlements: settlements.map(toLedgerSettlement)
     };
   }
@@ -709,20 +801,25 @@ export class PrismaStore implements Store {
     return toLedgerSettlement(settlement);
   }
 
-  async removeGroupMember(groupId: string, memberId: string): Promise<LedgerMember | null> {
-    const membership = await this.prisma.groupMembership.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId: memberId
+  async removeGroupMember(groupId: string, memberId: string): Promise<GroupDetail | null> {
+    const [membership, group] = await Promise.all([
+      this.prisma.groupMembership.findUnique({
+        where: {
+          groupId_userId: {
+            groupId,
+            userId: memberId
+          }
+        },
+        include: {
+          user: true
         }
-      },
-      include: {
-        user: true
-      }
-    });
+      }),
+      this.prisma.expenseGroup.findUnique({
+        where: { id: groupId }
+      })
+    ]);
 
-    if (!membership) {
+    if (!membership || !group) {
       return null;
     }
 
@@ -742,7 +839,7 @@ export class PrismaStore implements Store {
       }
     });
 
-    return toLedgerMember(updated);
+    return this.getGroupDetail(groupId, group.ownerId);
   }
 
   async deleteExpense(expenseId: string): Promise<boolean> {

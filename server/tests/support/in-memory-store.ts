@@ -19,7 +19,12 @@ import type {
   UpdateDisplayNameInput,
   UpdateExpenseInput
 } from "../../src/store/types";
-import { deriveBalances, normalizeExpenseShares, suggestSettlements } from "../../src/lib/ledger";
+import {
+  deriveBalances,
+  normalizeExpenseShares,
+  redistributeDepartedMemberExpense,
+  suggestSettlements
+} from "../../src/lib/ledger";
 import { sumMoney } from "../../src/lib/money";
 
 type StoredGroup = {
@@ -443,10 +448,19 @@ export class InMemoryStore implements Store {
     }
 
     const groupMembers = this.memberships
-      .filter((entry) => entry.groupId === groupId)
+      .filter((entry) => entry.groupId === groupId && entry.status === "active")
       .map((entry) => {
         const user = this.users.find((candidate) => candidate.id === entry.userId)!;
         return toLedgerMember(entry, user);
+      });
+    const activeMemberIds = groupMembers.map((entry) => entry.id);
+    const departedMemberships = this.memberships
+      .filter((entry) => entry.groupId === groupId && entry.status === "inactive")
+      .sort((left, right) => {
+        const leftTime = left.leftAt?.getTime() ?? left.createdAt.getTime();
+        const rightTime = right.leftAt?.getTime() ?? right.createdAt.getTime();
+
+        return leftTime - rightTime;
       });
 
     const ledgerExpenses = this.expenses
@@ -455,7 +469,18 @@ export class InMemoryStore implements Store {
         const byDate = left.expenseDate.getTime() - right.expenseDate.getTime();
         return byDate !== 0 ? byDate : left.createdAt.getTime() - right.createdAt.getTime();
       })
-      .map((expense) => this.materializeLedgerExpense(expense));
+      .map((expense) => this.materializeLedgerExpense(expense))
+      .map((expense) =>
+        departedMemberships.reduce(
+          (currentExpense, departedMembership) =>
+            redistributeDepartedMemberExpense(
+              currentExpense,
+              departedMembership.userId,
+              activeMemberIds
+            ),
+          expense
+        )
+      );
 
     const ledgerSettlements = this.settlements
       .filter((settlement) => settlement.groupId === groupId)
@@ -464,26 +489,37 @@ export class InMemoryStore implements Store {
         return byPaidAt !== 0 ? byPaidAt : left.createdAt.getTime() - right.createdAt.getTime();
       })
       .map(toLedgerSettlement);
+    const activeSettlements = ledgerSettlements.filter(
+      (settlement) =>
+        activeMemberIds.includes(settlement.fromUserId) &&
+        activeMemberIds.includes(settlement.toUserId)
+    );
 
-    const balances = deriveBalances({
-      memberIds: groupMembers.map((entry) => entry.id),
-      expenses: ledgerExpenses.map((expense) => ({
-        payers: expense.payers,
-        shares: expense.shares
-      })),
-      settlements: ledgerSettlements.map((settlement) => ({
-        fromUserId: settlement.fromUserId,
-        toUserId: settlement.toUserId,
-        amount: settlement.amount
-      }))
-    });
+    const balances =
+      activeMemberIds.length <= 1
+        ? activeMemberIds.map((userId) => ({
+            userId,
+            balance: "0.00"
+          }))
+        : deriveBalances({
+            memberIds: activeMemberIds,
+            expenses: ledgerExpenses.map((expense) => ({
+              payers: expense.payers,
+              shares: expense.shares
+            })),
+            settlements: activeSettlements.map((settlement) => ({
+              fromUserId: settlement.fromUserId,
+              toUserId: settlement.toUserId,
+              amount: settlement.amount
+            }))
+          });
 
     return {
       groupId,
       members: groupMembers,
       expenses: ledgerExpenses,
       balances,
-      settleUpSuggestions: suggestSettlements(balances),
+      settleUpSuggestions: activeMemberIds.length <= 1 ? [] : suggestSettlements(balances),
       settlements: ledgerSettlements
     };
   }
@@ -670,7 +706,7 @@ export class InMemoryStore implements Store {
     return toLedgerSettlement(settlement);
   }
 
-  async removeGroupMember(groupId: string, memberId: string): Promise<LedgerMember | null> {
+  async removeGroupMember(groupId: string, memberId: string): Promise<GroupDetail | null> {
     const membership = this.memberships.find(
       (entry) => entry.groupId === groupId && entry.userId === memberId
     );
@@ -682,8 +718,8 @@ export class InMemoryStore implements Store {
     membership.status = "inactive";
     membership.leftAt = new Date();
 
-    const user = this.users.find((candidate) => candidate.id === memberId)!;
-    return toLedgerMember(membership, user);
+    const group = this.groups.find((entry) => entry.id === groupId)!;
+    return this.getGroupDetail(groupId, group.ownerId);
   }
 
   async deleteExpense(expenseId: string): Promise<boolean> {
