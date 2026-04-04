@@ -28,6 +28,8 @@ model User {
   updatedAt             DateTime           @updatedAt
   sessions              Session[]
   ownedGroups           ExpenseGroup[]     @relation("GroupOwner")
+  createdExpenses       Expense[]          @relation("ExpenseCreator")
+  expensePayments       ExpensePayer[]     @relation("ExpensePayerUser")
   memberships           GroupMembership[]
   invitationsReceived   GroupInvitation[]  @relation("InvitationRecipient")
   invitationsSent       GroupInvitation[]  @relation("InvitationSender")
@@ -51,6 +53,33 @@ model ExpenseGroup {
   owner       User              @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   memberships GroupMembership[]
   invitations GroupInvitation[]
+  expenses    Expense[]
+}
+
+model Expense {
+  id              String         @id @default(cuid())
+  groupId         String
+  title           String
+  expenseDate     DateTime
+  createdByUserId String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  group           ExpenseGroup   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdBy       User           @relation("ExpenseCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  payers          ExpensePayer[]
+
+  @@index([groupId, expenseDate, createdAt])
+}
+
+model ExpensePayer {
+  id         String   @id @default(cuid())
+  expenseId  String
+  userId     String
+  amountPaid Decimal  @db.Decimal(12, 2)
+  expense    Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user       User     @relation("ExpensePayerUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([expenseId, userId])
 }
 
 model GroupMembership {

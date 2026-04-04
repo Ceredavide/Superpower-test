@@ -1,5 +1,7 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
+import { Decimal } from "@prisma/client/runtime/library";
 
+import { normalizeMoneyInput, sumMoney } from "../lib/money";
 import type {
   CreateExpenseInput,
   DashboardData,
@@ -16,6 +18,22 @@ import type {
   UpdateDisplayNameInput,
   UpdateExpenseInput
 } from "./types";
+
+const expenseInclude = {
+  createdBy: true,
+  payers: {
+    include: {
+      user: true
+    },
+    orderBy: {
+      id: "asc"
+    }
+  }
+} satisfies Prisma.ExpenseInclude;
+
+type ExpenseWithRelations = Prisma.ExpenseGetPayload<{
+  include: typeof expenseInclude;
+}>;
 
 function toGroupSummary(entry: {
   role: "owner" | "member";
@@ -37,11 +55,36 @@ function toGroupSummary(entry: {
   };
 }
 
+function toGroupExpense(expense: ExpenseWithRelations): GroupExpense {
+  return {
+    id: expense.id,
+    groupId: expense.groupId,
+    title: expense.title,
+    expenseDate: expense.expenseDate,
+    createdAt: expense.createdAt,
+    updatedAt: expense.updatedAt,
+    totalAmount: sumMoney(expense.payers.map((payer) => payer.amountPaid.toFixed(2))),
+    createdBy: {
+      id: expense.createdBy.id,
+      email: expense.createdBy.email,
+      displayName: expense.createdBy.displayName
+    },
+    payers: expense.payers.map((payer) => ({
+      user: {
+        id: payer.user.id,
+        email: payer.user.email,
+        displayName: payer.user.displayName
+      },
+      amountPaid: payer.amountPaid.toFixed(2)
+    }))
+  };
+}
+
 export class PrismaStore implements Store {
   constructor(private readonly prisma: PrismaClient) {}
 
   supportsExpenses() {
-    return false;
+    return true;
   }
 
   createUser(input: NewUserInput): Promise<StoredUser> {
@@ -380,27 +423,89 @@ export class PrismaStore implements Store {
     return { groups, invitations };
   }
 
-  async createExpense(_input: CreateExpenseInput): Promise<GroupExpense> {
-    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  async createExpense(input: CreateExpenseInput): Promise<GroupExpense> {
+    const expense = await this.prisma.expense.create({
+      data: {
+        groupId: input.groupId,
+        title: input.title,
+        expenseDate: input.expenseDate,
+        createdByUserId: input.createdByUserId,
+        payers: {
+          create: input.payers.map((payer) => ({
+            userId: payer.userId,
+            amountPaid: new Decimal(normalizeMoneyInput(payer.amountPaid))
+          }))
+        }
+      },
+      include: expenseInclude
+    });
+
+    return toGroupExpense(expense);
   }
 
-  async listExpensesForGroup(_groupId: string): Promise<GroupExpense[]> {
-    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  async listExpensesForGroup(groupId: string): Promise<GroupExpense[]> {
+    const expenses = await this.prisma.expense.findMany({
+      where: { groupId },
+      include: expenseInclude,
+      orderBy: [{ expenseDate: "asc" }, { createdAt: "asc" }]
+    });
+
+    return expenses.map(toGroupExpense);
   }
 
-  async findExpenseById(_expenseId: string): Promise<GroupExpense | null> {
-    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  async findExpenseById(expenseId: string): Promise<GroupExpense | null> {
+    const expense = await this.prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: expenseInclude
+    });
+
+    return expense ? toGroupExpense(expense) : null;
   }
 
-  async updateExpense(_input: UpdateExpenseInput): Promise<GroupExpense | null> {
-    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  async updateExpense(input: UpdateExpenseInput): Promise<GroupExpense | null> {
+    const existingExpense = await this.prisma.expense.findUnique({
+      where: { id: input.expenseId }
+    });
+
+    if (!existingExpense) {
+      return null;
+    }
+
+    const expense = await this.prisma.expense.update({
+      where: { id: input.expenseId },
+      data: {
+        title: input.title,
+        expenseDate: input.expenseDate,
+        payers: {
+          deleteMany: {},
+          create: input.payers.map((payer) => ({
+            userId: payer.userId,
+            amountPaid: new Decimal(normalizeMoneyInput(payer.amountPaid))
+          }))
+        }
+      },
+      include: expenseInclude
+    });
+
+    return toGroupExpense(expense);
   }
 
-  async deleteExpense(_expenseId: string): Promise<boolean> {
-    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  async deleteExpense(expenseId: string): Promise<boolean> {
+    const deleted = await this.prisma.expense.deleteMany({
+      where: { id: expenseId }
+    });
+
+    return deleted.count > 0;
   }
 
-  async isExpenseCreator(_expenseId: string, _userId: string): Promise<boolean> {
-    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  async isExpenseCreator(expenseId: string, userId: string): Promise<boolean> {
+    const count = await this.prisma.expense.count({
+      where: {
+        id: expenseId,
+        createdByUserId: userId
+      }
+    });
+
+    return count > 0;
   }
 }
