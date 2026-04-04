@@ -120,6 +120,35 @@ describe("ledger math helpers", () => {
     ]);
   });
 
+  test("gives leftover percentage cents to the largest fractional remainder", () => {
+    expect(
+      normalizeExpenseShares({
+        splitMode: "percentage",
+        total: "0.01",
+        participants: [
+          { userId: "member_a", included: true, percentage: 10 },
+          { userId: "member_b", included: true, percentage: 90 }
+        ]
+      })
+    ).toEqual([
+      { userId: "member_a", amount: "0.00" },
+      { userId: "member_b", amount: "0.01" }
+    ]);
+  });
+
+  test("rejects invalid individual percentage values", () => {
+    expect(() =>
+      normalizeExpenseShares({
+        splitMode: "percentage",
+        total: "1.00",
+        participants: [
+          { userId: "member_a", included: true, percentage: -10 },
+          { userId: "member_b", included: true, percentage: 110 }
+        ]
+      })
+    ).toThrow("Each percentage must be between 0 and 100.");
+  });
+
   test("derives balances from payer rows, owed shares, and settlements", () => {
     expect(
       deriveBalances({
@@ -164,6 +193,15 @@ describe("ledger math helpers", () => {
     ]);
   });
 
+  test("rejects settle-up inputs that do not net to zero", () => {
+    expect(() =>
+      suggestSettlements([
+        { userId: "member_a", balance: "7.00" },
+        { userId: "member_b", balance: "-1.00" }
+      ])
+    ).toThrow("Balances must sum to zero before suggesting settlements.");
+  });
+
   test("redistributes a departed member's expense-level payer and share effects", () => {
     expect(
       redistributeDepartedMemberExpense(
@@ -190,5 +228,26 @@ describe("ledger math helpers", () => {
         { userId: "member_b", amount: "0.05" }
       ]
     });
+  });
+
+  test("rejects redistribution entries for unknown active members", () => {
+    expect(() =>
+      redistributeDepartedMemberExpense(
+        {
+          payers: [
+            { userId: "member_a", amount: "0.20" },
+            { userId: "member_other", amount: "0.10" },
+            { userId: "member_departed", amount: "0.10" }
+          ],
+          shares: [
+            { userId: "member_a", amount: "0.20" },
+            { userId: "member_other", amount: "0.10" },
+            { userId: "member_departed", amount: "0.10" }
+          ]
+        },
+        "member_departed",
+        ["member_a", "member_b"]
+      )
+    ).toThrow("Redistribution input can only contain the departed member and active members.");
   });
 });

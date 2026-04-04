@@ -87,19 +87,52 @@ function normalizePercentageSplitCents(
   totalCents: number,
   entries: { userId: string; percentage: number }[]
 ) {
+  for (const entry of entries) {
+    if (entry.percentage < 0 || entry.percentage > 100) {
+      throw new Error("Each percentage must be between 0 and 100.");
+    }
+  }
+
   const percentageTotal = entries.reduce((total, entry) => total + entry.percentage, 0);
 
   if (Math.abs(percentageTotal - 100) > PERCENTAGE_SUM_TOLERANCE) {
     throw new Error("Percentages must sum to exactly 100.");
   }
 
-  const baseAmounts = entries.map((entry) => Math.floor((totalCents * entry.percentage) / 100));
-  const remainder = totalCents - baseAmounts.reduce((total, amount) => total + amount, 0);
+  const rankedEntries = entries.map((entry, index) => {
+    const rawAmount = (totalCents * entry.percentage) / 100;
+    const amountCents = Math.floor(rawAmount);
 
-  return entries.map((entry, index) => ({
-    userId: entry.userId,
-    amountCents: baseAmounts[index] + (index < remainder ? 1 : 0)
-  }));
+    return {
+      userId: entry.userId,
+      amountCents,
+      fractionalRemainder: rawAmount - amountCents,
+      index
+    };
+  });
+
+  let remainder = totalCents - rankedEntries.reduce((total, entry) => total + entry.amountCents, 0);
+
+  const orderedEntries = [...rankedEntries].sort((left, right) => {
+    if (right.fractionalRemainder !== left.fractionalRemainder) {
+      return right.fractionalRemainder - left.fractionalRemainder;
+    }
+
+    return left.index - right.index;
+  });
+
+  for (let index = 0; remainder > 0; index += 1) {
+    orderedEntries[index % orderedEntries.length].amountCents += 1;
+    remainder -= 1;
+  }
+
+  return [...rankedEntries]
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => ({
+      userId: entry.userId,
+      amountCents:
+        orderedEntries.find((candidate) => candidate.index === entry.index)?.amountCents ?? entry.amountCents
+    }));
 }
 
 function normalizeExactSplitCents(
@@ -216,6 +249,12 @@ export function suggestSettlements(balances: MoneyBalance[]): MoneySettlementSug
     }))
     .filter((balance) => balance.balanceCents !== 0);
 
+  const totalBalanceCents = workingBalances.reduce((total, balance) => total + balance.balanceCents, 0);
+
+  if (totalBalanceCents !== 0) {
+    throw new Error("Balances must sum to zero before suggesting settlements.");
+  }
+
   const suggestions: MoneySettlementSuggestion[] = [];
 
   while (true) {
@@ -269,6 +308,7 @@ function redistributeDepartedMemberEntries(
   }
 
   const amountsByUser = new Map<string, number>();
+  const allowedUserIds = new Set([departedUserId, ...activeMemberIds]);
 
   for (const userId of activeMemberIds) {
     amountsByUser.set(userId, 0);
@@ -277,6 +317,10 @@ function redistributeDepartedMemberEntries(
   let departedAmountCents = 0;
 
   for (const entry of entries) {
+    if (!allowedUserIds.has(entry.userId)) {
+      throw new Error("Redistribution input can only contain the departed member and active members.");
+    }
+
     if (entry.userId === departedUserId) {
       departedAmountCents += entry.amountCents;
       continue;
