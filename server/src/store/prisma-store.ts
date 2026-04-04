@@ -1,8 +1,10 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 import type {
+  CreateExpenseInput,
   DashboardData,
   GroupDetail,
+  GroupExpense,
   GroupSummary,
   InvitationSummary,
   NewSessionInput,
@@ -11,7 +13,8 @@ import type {
   Store,
   StoredSession,
   StoredUser,
-  UpdateDisplayNameInput
+  UpdateDisplayNameInput,
+  UpdateExpenseInput
 } from "./types";
 
 function toGroupSummary(entry: {
@@ -93,7 +96,7 @@ export class PrismaStore implements Store {
   }
 
   async createGroup(name: string, ownerId: string): Promise<GroupSummary> {
-    const group = await this.prisma.$transaction(async (tx) => {
+    const group = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const createdGroup = await tx.expenseGroup.create({
         data: {
           name,
@@ -133,7 +136,16 @@ export class PrismaStore implements Store {
       }
     });
 
-    return memberships.map((membership) =>
+    return memberships.map((membership: {
+      role: "owner" | "member";
+      group: {
+        id: string;
+        name: string;
+        ownerId: string;
+        createdAt: Date;
+        updatedAt: Date;
+      };
+    }) =>
       toGroupSummary({
         role: membership.role,
         group: membership.group
@@ -176,7 +188,14 @@ export class PrismaStore implements Store {
       role: membership.role,
       createdAt: membership.group.createdAt,
       updatedAt: membership.group.updatedAt,
-      members: membership.group.memberships.map((entry) => ({
+      members: membership.group.memberships.map((entry: {
+        user: {
+          id: string;
+          email: string;
+          displayName: string | null;
+        };
+        role: "owner" | "member";
+      }) => ({
         id: entry.user.id,
         email: entry.user.email,
         displayName: entry.user.displayName,
@@ -245,7 +264,20 @@ export class PrismaStore implements Store {
       }
     });
 
-    return invitations.map((invitation) => ({
+    return invitations.map((invitation: {
+      id: string;
+      createdAt: Date;
+      respondedAt: Date | null;
+      group: {
+        id: string;
+        name: string;
+      };
+      invitedBy: {
+        id: string;
+        email: string;
+        displayName: string | null;
+      };
+    }) => ({
       id: invitation.id,
       status: "pending" as const,
       createdAt: invitation.createdAt,
@@ -273,7 +305,7 @@ export class PrismaStore implements Store {
   }
 
   async acceptInvitation(invitationId: string, userId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const invitation = await tx.groupInvitation.findFirst({
         where: {
           id: invitationId,
@@ -342,5 +374,29 @@ export class PrismaStore implements Store {
     ]);
 
     return { groups, invitations };
+  }
+
+  async createExpense(_input: CreateExpenseInput): Promise<GroupExpense> {
+    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  }
+
+  async listExpensesForGroup(_groupId: string): Promise<GroupExpense[]> {
+    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  }
+
+  async findExpenseById(_expenseId: string): Promise<GroupExpense | null> {
+    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  }
+
+  async updateExpense(_input: UpdateExpenseInput): Promise<GroupExpense | null> {
+    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  }
+
+  async deleteExpense(_expenseId: string): Promise<boolean> {
+    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
+  }
+
+  async isExpenseCreator(_expenseId: string, _userId: string): Promise<boolean> {
+    throw new Error("Expense persistence is not implemented in PrismaStore yet.");
   }
 }

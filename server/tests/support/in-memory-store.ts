@@ -1,6 +1,8 @@
 import type {
+  CreateExpenseInput,
   DashboardData,
   GroupDetail,
+  GroupExpense,
   GroupSummary,
   InvitationSummary,
   NewSessionInput,
@@ -9,8 +11,10 @@ import type {
   Store,
   StoredSession,
   StoredUser,
-  UpdateDisplayNameInput
+  UpdateDisplayNameInput,
+  UpdateExpenseInput
 } from "../../src/store/types";
+import { sumMoney } from "../../src/lib/money";
 
 type StoredGroup = {
   id: string;
@@ -38,6 +42,23 @@ type StoredInvitation = {
   respondedAt: Date | null;
 };
 
+type StoredExpense = {
+  id: string;
+  groupId: string;
+  title: string;
+  expenseDate: Date;
+  createdByUserId: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type StoredExpensePayer = {
+  id: string;
+  expenseId: string;
+  userId: string;
+  amountPaid: string;
+};
+
 function createId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -48,6 +69,8 @@ export class InMemoryStore implements Store {
   private groups: StoredGroup[] = [];
   private memberships: StoredMembership[] = [];
   private invitations: StoredInvitation[] = [];
+  private expenses: StoredExpense[] = [];
+  private expensePayers: StoredExpensePayer[] = [];
 
   async createUser(input: NewUserInput): Promise<StoredUser> {
     const now = new Date();
@@ -315,5 +338,112 @@ export class InMemoryStore implements Store {
       groups: await this.listGroupsForUser(userId),
       invitations: await this.listPendingInvitationsForUser(userId)
     };
+  }
+
+  private materializeExpense(expense: StoredExpense): GroupExpense {
+    const createdBy = this.users.find((user) => user.id === expense.createdByUserId)!;
+    const payers = this.expensePayers
+      .filter((entry) => entry.expenseId === expense.id)
+      .map((entry) => ({
+        user: this.users.find((user) => user.id === entry.userId)!,
+        amountPaid: entry.amountPaid
+      }));
+
+    return {
+      id: expense.id,
+      groupId: expense.groupId,
+      title: expense.title,
+      expenseDate: expense.expenseDate,
+      createdAt: expense.createdAt,
+      updatedAt: expense.updatedAt,
+      totalAmount: sumMoney(payers.map((payer) => payer.amountPaid)),
+      createdBy: {
+        id: createdBy.id,
+        email: createdBy.email,
+        displayName: createdBy.displayName
+      },
+      payers: payers.map((payer) => ({
+        user: {
+          id: payer.user.id,
+          email: payer.user.email,
+          displayName: payer.user.displayName
+        },
+        amountPaid: payer.amountPaid
+      }))
+    };
+  }
+
+  async createExpense(input: CreateExpenseInput): Promise<GroupExpense> {
+    const now = new Date();
+    const expense: StoredExpense = {
+      id: createId("expense"),
+      groupId: input.groupId,
+      title: input.title,
+      expenseDate: input.expenseDate,
+      createdByUserId: input.createdByUserId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.expenses.push(expense);
+    this.expensePayers.push(
+      ...input.payers.map((payer) => ({
+        id: createId("expense_payer"),
+        expenseId: expense.id,
+        userId: payer.userId,
+        amountPaid: payer.amountPaid
+      }))
+    );
+
+    return this.materializeExpense(expense);
+  }
+
+  async listExpensesForGroup(groupId: string): Promise<GroupExpense[]> {
+    return this.expenses
+      .filter((expense) => expense.groupId === groupId)
+      .sort((left, right) => {
+        const byDate = left.expenseDate.getTime() - right.expenseDate.getTime();
+        return byDate !== 0 ? byDate : left.createdAt.getTime() - right.createdAt.getTime();
+      })
+      .map((expense) => this.materializeExpense(expense));
+  }
+
+  async findExpenseById(expenseId: string): Promise<GroupExpense | null> {
+    const expense = this.expenses.find((entry) => entry.id === expenseId);
+    return expense ? this.materializeExpense(expense) : null;
+  }
+
+  async updateExpense(input: UpdateExpenseInput): Promise<GroupExpense | null> {
+    const expense = this.expenses.find((entry) => entry.id === input.expenseId);
+
+    if (!expense) {
+      return null;
+    }
+
+    expense.title = input.title;
+    expense.expenseDate = input.expenseDate;
+    expense.updatedAt = new Date();
+    this.expensePayers = this.expensePayers.filter((entry) => entry.expenseId !== expense.id);
+    this.expensePayers.push(
+      ...input.payers.map((payer) => ({
+        id: createId("expense_payer"),
+        expenseId: expense.id,
+        userId: payer.userId,
+        amountPaid: payer.amountPaid
+      }))
+    );
+
+    return this.materializeExpense(expense);
+  }
+
+  async deleteExpense(expenseId: string): Promise<boolean> {
+    const previousLength = this.expenses.length;
+    this.expenses = this.expenses.filter((entry) => entry.id !== expenseId);
+    this.expensePayers = this.expensePayers.filter((entry) => entry.expenseId !== expenseId);
+    return this.expenses.length !== previousLength;
+  }
+
+  async isExpenseCreator(expenseId: string, userId: string): Promise<boolean> {
+    return this.expenses.some((expense) => expense.id === expenseId && expense.createdByUserId === userId);
   }
 }

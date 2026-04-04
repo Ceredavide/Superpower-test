@@ -82,6 +82,49 @@ export type DashboardData = {
   invitations: InvitationSummary[];
 };
 
+export type ExpensePayerInput = {
+  userId: string;
+  amountPaid: string;
+};
+
+export type CreateExpenseInput = {
+  groupId: string;
+  createdByUserId: string;
+  title: string;
+  expenseDate: Date;
+  payers: ExpensePayerInput[];
+};
+
+export type UpdateExpenseInput = {
+  expenseId: string;
+  title: string;
+  expenseDate: Date;
+  payers: ExpensePayerInput[];
+};
+
+export type GroupExpense = {
+  id: string;
+  groupId: string;
+  title: string;
+  expenseDate: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  totalAmount: string;
+  createdBy: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
+  payers: Array<{
+    user: {
+      id: string;
+      email: string;
+      displayName: string | null;
+    };
+    amountPaid: string;
+  }>;
+};
+
 export interface Store {
   createUser(input: NewUserInput): Promise<StoredUser>;
   findUserByEmail(email: string): Promise<StoredUser | null>;
@@ -103,4 +146,10 @@ export interface Store {
   acceptInvitation(invitationId: string, userId: string): Promise<unknown>;
   declineInvitation(invitationId: string, userId: string): Promise<unknown>;
   getDashboardData(userId: string): Promise<DashboardData>;
+  createExpense(input: CreateExpenseInput): Promise<GroupExpense>;
+  listExpensesForGroup(groupId: string): Promise<GroupExpense[]>;
+  findExpenseById(expenseId: string): Promise<GroupExpense | null>;
+  updateExpense(input: UpdateExpenseInput): Promise<GroupExpense | null>;
+  deleteExpense(expenseId: string): Promise<boolean>;
+  isExpenseCreator(expenseId: string, userId: string): Promise<boolean>;
 }
