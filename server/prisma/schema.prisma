@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GroupRole {
+  owner
+  member
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  declined
+}
+
+model User {
+  id                    String             @id @default(cuid())
+  email                 String             @unique
+  passwordHash          String
+  displayName           String?
+  displayNameNormalized String?            @unique
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  sessions              Session[]
+  ownedGroups           ExpenseGroup[]     @relation("GroupOwner")
+  memberships           GroupMembership[]
+  invitationsReceived   GroupInvitation[]  @relation("InvitationRecipient")
+  invitationsSent       GroupInvitation[]  @relation("InvitationSender")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ExpenseGroup {
+  id          String            @id @default(cuid())
+  name        String
+  ownerId     String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  owner       User              @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  memberships GroupMembership[]
+  invitations GroupInvitation[]
+}
+
+model GroupMembership {
+  id        String      @id @default(cuid())
+  groupId   String
+  userId    String
+  role      GroupRole   @default(member)
+  createdAt DateTime    @default(now())
+  group     ExpenseGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+}
+
+model GroupInvitation {
+  id              String           @id @default(cuid())
+  groupId         String
+  invitedUserId   String
+  invitedByUserId String
+  status          InvitationStatus @default(pending)
+  createdAt       DateTime         @default(now())
+  respondedAt     DateTime?
+  group           ExpenseGroup     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  invitedUser     User             @relation("InvitationRecipient", fields: [invitedUserId], references: [id], onDelete: Cascade)
+  invitedBy       User             @relation("InvitationSender", fields: [invitedByUserId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, invitedUserId, status])
+}
