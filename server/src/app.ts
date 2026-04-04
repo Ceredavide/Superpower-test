@@ -392,134 +392,136 @@ export function createApp({
     return response.status(201).json({ invitation });
   });
 
-  app.get("/groups/:groupId/expenses", async (request, response) => {
-    const user = await requireUser(request, response);
+  if (store.supportsExpenses()) {
+    app.get("/groups/:groupId/expenses", async (request, response) => {
+      const user = await requireUser(request, response);
 
-    if (!user) {
-      return;
-    }
-
-    const isMember = await store.isGroupMember(request.params.groupId, user.id);
-
-    if (!isMember) {
-      return response.status(403).json({ error: "Only group members can view expenses." });
-    }
-
-    const expenses = await store.listExpensesForGroup(request.params.groupId);
-    return response.status(200).json({ expenses: expenses.map(serializeExpense) });
-  });
-
-  app.post("/groups/:groupId/expenses", async (request, response) => {
-    const user = await requireUser(request, response);
-
-    if (!user) {
-      return;
-    }
-
-    if (!requireCompletedProfile(user, response)) {
-      return;
-    }
-
-    const isMember = await store.isGroupMember(request.params.groupId, user.id);
-
-    if (!isMember) {
-      return response.status(403).json({ error: "Only group members can add expenses." });
-    }
-
-    const parsed = expenseSchema.safeParse(request.body);
-
-    if (!parsed.success) {
-      return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
-    }
-
-    try {
-      const normalizedPayers = await validateExpensePayers(request.params.groupId, parsed.data.payers);
-
-      const expense = await store.createExpense({
-        groupId: request.params.groupId,
-        createdByUserId: user.id,
-        title: parsed.data.title.trim(),
-        expenseDate: new Date(`${parsed.data.expenseDate}T00:00:00.000Z`),
-        payers: normalizedPayers
-      });
-
-      return response.status(201).json({ expense: serializeExpense(expense) });
-    } catch (error) {
-      if (error instanceof ExpenseValidationError) {
-        return response.status(400).json({ error: error.message });
+      if (!user) {
+        return;
       }
 
-      throw error;
-    }
-  });
+      const isMember = await store.isGroupMember(request.params.groupId, user.id);
 
-  app.patch("/expenses/:expenseId", async (request, response) => {
-    const user = await requireUser(request, response);
+      if (!isMember) {
+        return response.status(403).json({ error: "Only group members can view expenses." });
+      }
 
-    if (!user) {
-      return;
-    }
+      const expenses = await store.listExpensesForGroup(request.params.groupId);
+      return response.status(200).json({ expenses: expenses.map(serializeExpense) });
+    });
 
-    const expense = await store.findExpenseById(request.params.expenseId);
+    app.post("/groups/:groupId/expenses", async (request, response) => {
+      const user = await requireUser(request, response);
 
-    if (!expense) {
-      return response.status(404).json({ error: "Expense not found." });
-    }
+      if (!user) {
+        return;
+      }
 
-    if (expense.createdBy.id !== user.id) {
-      return response.status(403).json({ error: "Only the creator can edit this expense." });
-    }
+      if (!requireCompletedProfile(user, response)) {
+        return;
+      }
 
-    const parsed = expenseSchema.safeParse(request.body);
+      const isMember = await store.isGroupMember(request.params.groupId, user.id);
 
-    if (!parsed.success) {
-      return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
-    }
+      if (!isMember) {
+        return response.status(403).json({ error: "Only group members can add expenses." });
+      }
 
-    try {
-      const normalizedPayers = await validateExpensePayers(expense.groupId, parsed.data.payers);
+      const parsed = expenseSchema.safeParse(request.body);
 
-      const updatedExpense = await store.updateExpense({
-        expenseId: expense.id,
-        title: parsed.data.title.trim(),
-        expenseDate: new Date(`${parsed.data.expenseDate}T00:00:00.000Z`),
-        payers: normalizedPayers
-      });
+      if (!parsed.success) {
+        return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
+      }
 
-      if (!updatedExpense) {
+      try {
+        const normalizedPayers = await validateExpensePayers(request.params.groupId, parsed.data.payers);
+
+        const expense = await store.createExpense({
+          groupId: request.params.groupId,
+          createdByUserId: user.id,
+          title: parsed.data.title.trim(),
+          expenseDate: new Date(`${parsed.data.expenseDate}T00:00:00.000Z`),
+          payers: normalizedPayers
+        });
+
+        return response.status(201).json({ expense: serializeExpense(expense) });
+      } catch (error) {
+        if (error instanceof ExpenseValidationError) {
+          return response.status(400).json({ error: error.message });
+        }
+
+        throw error;
+      }
+    });
+
+    app.patch("/expenses/:expenseId", async (request, response) => {
+      const user = await requireUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const expense = await store.findExpenseById(request.params.expenseId);
+
+      if (!expense) {
         return response.status(404).json({ error: "Expense not found." });
       }
 
-      return response.status(200).json({ expense: serializeExpense(updatedExpense) });
-    } catch (error) {
-      if (error instanceof ExpenseValidationError) {
-        return response.status(400).json({ error: error.message });
+      if (expense.createdBy.id !== user.id) {
+        return response.status(403).json({ error: "Only the creator can edit this expense." });
       }
 
-      throw error;
-    }
-  });
+      const parsed = expenseSchema.safeParse(request.body);
 
-  app.delete("/expenses/:expenseId", async (request, response) => {
-    const user = await requireUser(request, response);
+      if (!parsed.success) {
+        return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
+      }
 
-    if (!user) {
-      return;
-    }
+      try {
+        const normalizedPayers = await validateExpensePayers(expense.groupId, parsed.data.payers);
 
-    const expense = await store.findExpenseById(request.params.expenseId);
+        const updatedExpense = await store.updateExpense({
+          expenseId: expense.id,
+          title: parsed.data.title.trim(),
+          expenseDate: new Date(`${parsed.data.expenseDate}T00:00:00.000Z`),
+          payers: normalizedPayers
+        });
 
-    if (!expense) {
-      return response.status(404).json({ error: "Expense not found." });
-    }
+        if (!updatedExpense) {
+          return response.status(404).json({ error: "Expense not found." });
+        }
 
-    if (expense.createdBy.id !== user.id) {
-      return response.status(403).json({ error: "Only the creator can delete this expense." });
-    }
+        return response.status(200).json({ expense: serializeExpense(updatedExpense) });
+      } catch (error) {
+        if (error instanceof ExpenseValidationError) {
+          return response.status(400).json({ error: error.message });
+        }
 
-    await store.deleteExpense(expense.id);
-    return response.status(204).send();
-  });
+        throw error;
+      }
+    });
+
+    app.delete("/expenses/:expenseId", async (request, response) => {
+      const user = await requireUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const expense = await store.findExpenseById(request.params.expenseId);
+
+      if (!expense) {
+        return response.status(404).json({ error: "Expense not found." });
+      }
+
+      if (expense.createdBy.id !== user.id) {
+        return response.status(403).json({ error: "Only the creator can delete this expense." });
+      }
+
+      await store.deleteExpense(expense.id);
+      return response.status(204).send();
+    });
+  }
 
   app.post("/invitations/:invitationId/accept", async (request, response) => {
     const user = await requireUser(request, response);

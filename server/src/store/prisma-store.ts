@@ -40,6 +40,10 @@ function toGroupSummary(entry: {
 export class PrismaStore implements Store {
   constructor(private readonly prisma: PrismaClient) {}
 
+  supportsExpenses() {
+    return false;
+  }
+
   createUser(input: NewUserInput): Promise<StoredUser> {
     return this.prisma.user.create({
       data: {

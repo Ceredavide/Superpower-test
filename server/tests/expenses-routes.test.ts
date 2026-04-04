@@ -1,7 +1,9 @@
 import request from "supertest";
+import type { PrismaClient } from "@prisma/client";
 import { describe, expect, test } from "vitest";
 
 import { createApp } from "../src/app";
+import { PrismaStore } from "../src/store/prisma-store";
 import { InMemoryStore } from "./support/in-memory-store";
 
 async function registerMember(
@@ -32,6 +34,14 @@ async function createGroup(app: ReturnType<typeof createApp>, cookie: string, na
 }
 
 describe("expense routes", () => {
+  test("does not expose expense routes when the store does not support them", async () => {
+    const app = createApp({ store: new PrismaStore({} as PrismaClient) });
+
+    const response = await request(app).get("/groups/group_123/expenses");
+
+    expect(response.status).toBe(404);
+  });
+
   test("creates expenses, lists them oldest-first, and returns computed totals", async () => {
     const app = createApp({ store: new InMemoryStore() });
     const owner = await registerMember(app, "owner@example.com", "Morgan");

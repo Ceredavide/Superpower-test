@@ -72,6 +72,10 @@ export class InMemoryStore implements Store {
   private expenses: StoredExpense[] = [];
   private expensePayers: StoredExpensePayer[] = [];
 
+  supportsExpenses() {
+    return true;
+  }
+
   async createUser(input: NewUserInput): Promise<StoredUser> {
     const now = new Date();
     const user: StoredUser = {

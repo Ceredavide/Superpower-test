@@ -126,6 +126,7 @@ export type GroupExpense = {
 };
 
 export interface Store {
+  supportsExpenses(): boolean;
   createUser(input: NewUserInput): Promise<StoredUser>;
   findUserByEmail(email: string): Promise<StoredUser | null>;
   findUserById(userId: string): Promise<StoredUser | null>;
