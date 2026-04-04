@@ -30,20 +30,18 @@ function createEmptyDraft(group: GroupDetail, currentUserId: string): ExpenseDra
 function parseAmountToCents(amount: string) {
   const normalized = amount.trim();
 
-  if (!normalized) {
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(normalized)) {
     return 0;
   }
 
-  const match = normalized.match(/^(\d*)(?:\.(\d{0,2})\d*)?$/);
+  const [whole, fraction = ""] = normalized.split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
 
-  if (!match) {
+  if (cents === 0) {
     return 0;
   }
 
-  const whole = Number(match[1] || "0") * 100;
-  const fraction = Number((match[2] ?? "").padEnd(2, "0"));
-
-  return whole + fraction;
+  return cents;
 }
 
 function formatCents(totalCents: number) {
@@ -125,6 +123,13 @@ export function GroupExpensesSection({
     setDraft(createEmptyDraft(group, currentUserId));
   }
 
+  function upsertExpense(expense: GroupExpense) {
+    setExpenses((current) => {
+      const remainingExpenses = current.filter((existingExpense) => existingExpense.id !== expense.id);
+      return [...remainingExpenses, expense];
+    });
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSaving(true);
@@ -139,15 +144,16 @@ export function GroupExpensesSection({
 
     try {
       if (editingExpenseId) {
-        await api.updateExpense(editingExpenseId, payload);
+        const response = await api.updateExpense(editingExpenseId, payload);
+        upsertExpense(response.expense);
         setSuccessMessage("Expense updated.");
       } else {
-        await api.createExpense(group.id, payload);
+        const response = await api.createExpense(group.id, payload);
+        upsertExpense(response.expense);
         setSuccessMessage("Expense saved.");
       }
 
       resetForm();
-      await loadExpenses();
     } catch (caughtError) {
       setError(caughtError instanceof ApiError ? caughtError.message : "Unable to save the expense.");
     } finally {
@@ -161,11 +167,11 @@ export function GroupExpensesSection({
 
     try {
       await api.deleteExpense(expenseId);
+      setExpenses((current) => current.filter((expense) => expense.id !== expenseId));
       if (editingExpenseId === expenseId) {
         resetForm();
       }
       setSuccessMessage("Expense deleted.");
-      await loadExpenses();
     } catch (caughtError) {
       setError(caughtError instanceof ApiError ? caughtError.message : "Unable to delete the expense.");
     }
