@@ -54,14 +54,14 @@ maybeDescribe("Prisma expense persistence integration", () => {
           email: `${ownerId}@example.com`,
           passwordHash: "hash",
           displayName: "Morgan",
-          displayNameNormalized: "morgan"
+          displayNameNormalized: `morgan_${uniqueSuffix}`
         },
         {
           id: memberId,
           email: `${memberId}@example.com`,
           passwordHash: "hash",
           displayName: "Avery",
-          displayNameNormalized: "avery"
+          displayNameNormalized: `avery_${uniqueSuffix}`
         }
       ]
     });
