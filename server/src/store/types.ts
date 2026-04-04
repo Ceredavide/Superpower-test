@@ -48,6 +48,13 @@ export type ExpenseCategory = "food" | "transport" | "housing" | "entertainment"
 
 export type ExpenseSplitMode = "equal" | "percentage" | "exact";
 
+export type ExpenseParticipantInput = {
+  userId: string;
+  included: boolean;
+  percentage?: number;
+  amountOwed?: string;
+};
+
 export type LedgerAmount = {
   userId: string;
   amountCents: number;
@@ -156,7 +163,7 @@ export type ExpensePayerInput = {
   amountPaid: string;
 };
 
-export type CreateExpenseInput = {
+type LegacyExpenseInput = {
   groupId: string;
   createdByUserId: string;
   title: string;
@@ -164,11 +171,36 @@ export type CreateExpenseInput = {
   payers: ExpensePayerInput[];
 };
 
-export type UpdateExpenseInput = {
+type LedgerExpenseInput = LegacyExpenseInput & {
+  category: ExpenseCategory;
+  splitMode: ExpenseSplitMode;
+  participants: ExpenseParticipantInput[];
+};
+
+export type CreateExpenseInput = LegacyExpenseInput | LedgerExpenseInput;
+
+export type UpdateExpenseInput = (
+  | {
+      expenseId: string;
+      title: string;
+      expenseDate: Date;
+      payers: ExpensePayerInput[];
+    }
+  | {
+      expenseId: string;
+      title: string;
+      expenseDate: Date;
+      payers: ExpensePayerInput[];
+      category: ExpenseCategory;
+      splitMode: ExpenseSplitMode;
+      participants: ExpenseParticipantInput[];
+    }
+);
+
+export type LedgerExpenseSubmission = LedgerExpenseInput;
+
+export type LedgerExpenseUpdateSubmission = LedgerExpenseInput & {
   expenseId: string;
-  title: string;
-  expenseDate: Date;
-  payers: ExpensePayerInput[];
 };
 
 export type GroupExpense = {

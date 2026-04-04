@@ -1,11 +1,16 @@
+import { moneyToCents } from "./money";
+
+import type { ExpenseParticipantInput, ExpenseSplitMode } from "../store/types";
+
 export type LedgerEntry = {
   userId: string;
   amountCents: number;
 };
 
-export type PercentageSplitEntry = {
-  userId: string;
-  percentage: number;
+export type NormalizeExpenseSharesInput = {
+  splitMode: ExpenseSplitMode;
+  totalCents: number;
+  participants: ExpenseParticipantInput[];
 };
 
 export type ExpenseLedgerInput = {
@@ -52,7 +57,7 @@ export function normalizeEqualSplit(totalCents: number, memberIds: string[]) {
   }));
 }
 
-export function normalizePercentageSplit(totalCents: number, entries: PercentageSplitEntry[]) {
+export function normalizePercentageSplit(totalCents: number, entries: { userId: string; percentage: number }[]) {
   const percentageTotal = entries.reduce((total, entry) => total + entry.percentage, 0);
 
   if (Math.abs(percentageTotal - 100) > PERCENTAGE_SUM_TOLERANCE) {
@@ -66,6 +71,69 @@ export function normalizePercentageSplit(totalCents: number, entries: Percentage
     userId: entry.userId,
     amountCents: baseAmounts[index] + (index < remainder ? 1 : 0)
   }));
+}
+
+function normalizeExactSplit(
+  totalCents: number,
+  entries: { userId: string; amountOwed?: string }[]
+) {
+  const normalizedEntries = entries.map((entry) => {
+    if (!entry.amountOwed) {
+      throw new Error("Exact split participants must include amountOwed.");
+    }
+
+    return {
+      userId: entry.userId,
+      amountCents: moneyToCents(entry.amountOwed)
+    };
+  });
+
+  const totalShareCents = normalizedEntries.reduce((total, entry) => total + entry.amountCents, 0);
+
+  if (totalShareCents !== totalCents) {
+    throw new Error("Exact split amounts must sum to the expense total.");
+  }
+
+  return normalizedEntries;
+}
+
+export function normalizeExpenseShares(input: NormalizeExpenseSharesInput) {
+  const includedParticipants = input.participants.filter((participant) => participant.included);
+
+  if (includedParticipants.length === 0) {
+    throw new Error("At least one participant must be included.");
+  }
+
+  if (input.splitMode === "equal") {
+    return normalizeEqualSplit(
+      input.totalCents,
+      includedParticipants.map((participant) => participant.userId)
+    );
+  }
+
+  if (input.splitMode === "percentage") {
+    return normalizePercentageSplit(
+      input.totalCents,
+      includedParticipants.map((participant) => {
+        if (participant.percentage === undefined) {
+          throw new Error("Percentage split participants must include percentage.");
+        }
+
+        return {
+          userId: participant.userId,
+          percentage: participant.percentage
+        };
+      })
+    );
+  }
+
+  return normalizeExactSplit(
+    input.totalCents,
+    includedParticipants.map((participant) => ({
+      userId: participant.userId,
+      amountOwed: participant.amountOwed
+    }))
+  );
 }
 
 export function deriveBalances(input: DeriveBalancesInput): BalanceSummary[] {
@@ -189,4 +257,15 @@ export function redistributeDepartedMemberEntries(
     userId,
     amountCents: amountsByUser.get(userId) ?? 0
   }));
+}
+
+export function redistributeDepartedMemberExpense(
+  expense: ExpenseLedgerInput,
+  departedUserId: string,
+  activeMemberIds: string[]
+) {
+  return {
+    payers: redistributeDepartedMemberEntries(expense.payers, departedUserId, activeMemberIds),
+    shares: redistributeDepartedMemberEntries(expense.shares, departedUserId, activeMemberIds)
+  };
 }
