@@ -48,7 +48,7 @@ describe("ledger math helpers", () => {
     expect(
       normalizeExpenseShares({
         splitMode: "equal",
-        totalCents: 101,
+        total: "1.01",
         participants: [
           { userId: "member_a", included: true },
           { userId: "member_b", included: true },
@@ -56,15 +56,15 @@ describe("ledger math helpers", () => {
         ]
       })
     ).toEqual([
-      { userId: "member_a", amountCents: 34 },
-      { userId: "member_b", amountCents: 34 },
-      { userId: "member_c", amountCents: 33 }
+      { userId: "member_a", amount: "0.34" },
+      { userId: "member_b", amount: "0.34" },
+      { userId: "member_c", amount: "0.33" }
     ]);
 
     expect(
       normalizeExpenseShares({
         splitMode: "equal",
-        totalCents: 100,
+        total: "1.00",
         participants: [
           { userId: "member_a", included: true },
           { userId: "member_b", included: false },
@@ -72,8 +72,8 @@ describe("ledger math helpers", () => {
         ]
       })
     ).toEqual([
-      { userId: "member_a", amountCents: 50 },
-      { userId: "member_c", amountCents: 50 }
+      { userId: "member_a", amount: "0.50" },
+      { userId: "member_c", amount: "0.50" }
     ]);
   });
 
@@ -81,7 +81,7 @@ describe("ledger math helpers", () => {
     expect(
       normalizeExpenseShares({
         splitMode: "percentage",
-        totalCents: 100,
+        total: "1.00",
         participants: [
           { userId: "member_a", included: true, percentage: 33.4 },
           { userId: "member_b", included: true, percentage: 33.3 },
@@ -89,15 +89,15 @@ describe("ledger math helpers", () => {
         ]
       })
     ).toEqual([
-      { userId: "member_a", amountCents: 34 },
-      { userId: "member_b", amountCents: 33 },
-      { userId: "member_c", amountCents: 33 }
+      { userId: "member_a", amount: "0.34" },
+      { userId: "member_b", amount: "0.33" },
+      { userId: "member_c", amount: "0.33" }
     ]);
 
     expect(() =>
       normalizeExpenseShares({
         splitMode: "percentage",
-        totalCents: 100,
+        total: "1.00",
         participants: [
           { userId: "member_a", included: true, percentage: 60 },
           { userId: "member_b", included: true, percentage: 30 }
@@ -108,15 +108,15 @@ describe("ledger math helpers", () => {
     expect(
       normalizeExpenseShares({
         splitMode: "exact",
-        totalCents: 20000,
+        total: "200.00",
         participants: [
           { userId: "member_a", included: true, amountOwed: "125.00" },
           { userId: "member_b", included: true, amountOwed: "75.00" }
         ]
       })
     ).toEqual([
-      { userId: "member_a", amountCents: 12500 },
-      { userId: "member_b", amountCents: 7500 }
+      { userId: "member_a", amount: "125.00" },
+      { userId: "member_b", amount: "75.00" }
     ]);
   });
 
@@ -127,12 +127,12 @@ describe("ledger math helpers", () => {
         expenses: [
           {
             payers: [
-              { userId: "member_a", amountCents: 1000 },
-              { userId: "member_b", amountCents: 500 }
+              { userId: "member_a", amount: "10.00" },
+              { userId: "member_b", amount: "5.00" }
             ],
             shares: [
-              { userId: "member_a", amountCents: 500 },
-              { userId: "member_b", amountCents: 500 }
+              { userId: "member_a", amount: "5.00" },
+              { userId: "member_b", amount: "5.00" }
             ]
           }
         ],
@@ -140,27 +140,27 @@ describe("ledger math helpers", () => {
           {
             fromUserId: "member_b",
             toUserId: "member_a",
-            amountCents: 200
+            amount: "2.00"
           }
         ]
       })
     ).toEqual([
-      { userId: "member_a", balanceCents: 700 },
-      { userId: "member_b", balanceCents: -200 },
-      { userId: "member_c", balanceCents: 0 }
+      { userId: "member_a", balance: "7.00" },
+      { userId: "member_b", balance: "-2.00" },
+      { userId: "member_c", balance: "0.00" }
     ]);
   });
 
   test("suggests settle-up transfers with greedy debtor-creditor matching", () => {
     expect(
       suggestSettlements([
-        { userId: "member_a", balanceCents: 700 },
-        { userId: "member_b", balanceCents: -200 },
-        { userId: "member_c", balanceCents: -500 }
+        { userId: "member_a", balance: "7.00" },
+        { userId: "member_b", balance: "-2.00" },
+        { userId: "member_c", balance: "-5.00" }
       ])
     ).toEqual([
-      { fromUserId: "member_c", toUserId: "member_a", amountCents: 500 },
-      { fromUserId: "member_b", toUserId: "member_a", amountCents: 200 }
+      { fromUserId: "member_c", toUserId: "member_a", amount: "5.00" },
+      { fromUserId: "member_b", toUserId: "member_a", amount: "2.00" }
     ]);
   });
 
@@ -169,12 +169,12 @@ describe("ledger math helpers", () => {
       redistributeDepartedMemberExpense(
         {
           payers: [
-            { userId: "member_a", amountCents: 20 },
-            { userId: "member_departed", amountCents: 10 }
+            { userId: "member_a", amount: "0.20" },
+            { userId: "member_departed", amount: "0.10" }
           ],
           shares: [
-            { userId: "member_a", amountCents: 20 },
-            { userId: "member_departed", amountCents: 10 }
+            { userId: "member_a", amount: "0.20" },
+            { userId: "member_departed", amount: "0.10" }
           ]
         },
         "member_departed",
@@ -182,12 +182,12 @@ describe("ledger math helpers", () => {
       )
     ).toEqual({
       payers: [
-        { userId: "member_a", amountCents: 25 },
-        { userId: "member_b", amountCents: 5 }
+        { userId: "member_a", amount: "0.25" },
+        { userId: "member_b", amount: "0.05" }
       ],
       shares: [
-        { userId: "member_a", amountCents: 25 },
-        { userId: "member_b", amountCents: 5 }
+        { userId: "member_a", amount: "0.25" },
+        { userId: "member_b", amount: "0.05" }
       ]
     });
   });

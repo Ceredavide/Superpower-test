@@ -1,4 +1,4 @@
-import { moneyToCents } from "./money";
+import { centsToMoney, moneyToCents } from "./money";
 
 import type { ExpenseParticipantInput, ExpenseSplitMode } from "../store/types";
 
@@ -9,19 +9,25 @@ export type LedgerEntry = {
 
 export type NormalizeExpenseSharesInput = {
   splitMode: ExpenseSplitMode;
-  totalCents: number;
+  total: string;
   participants: ExpenseParticipantInput[];
 };
 
 export type ExpenseLedgerInput = {
-  payers: LedgerEntry[];
-  shares: LedgerEntry[];
+  payers: Array<{
+    userId: string;
+    amount: string;
+  }>;
+  shares: Array<{
+    userId: string;
+    amount: string;
+  }>;
 };
 
 export type SettlementLedgerInput = {
   fromUserId: string;
   toUserId: string;
-  amountCents: number;
+  amount: string;
 };
 
 export type DeriveBalancesInput = {
@@ -32,18 +38,38 @@ export type DeriveBalancesInput = {
 
 export type BalanceSummary = {
   userId: string;
-  balanceCents: number;
-};
-
-export type SettlementSuggestion = {
-  fromUserId: string;
-  toUserId: string;
-  amountCents: number;
+  balance: string;
 };
 
 const PERCENTAGE_SUM_TOLERANCE = 1e-9;
 
-export function normalizeEqualSplit(totalCents: number, memberIds: string[]) {
+type MoneyAmount = {
+  userId: string;
+  amount: string;
+};
+
+type MoneyBalance = {
+  userId: string;
+  balance: string;
+};
+
+type MoneySettlementSuggestion = {
+  fromUserId: string;
+  toUserId: string;
+  amount: string;
+};
+
+function signedMoneyToCents(value: string) {
+  const trimmed = value.trim();
+
+  if (trimmed.startsWith("-")) {
+    return -moneyToCents(trimmed.slice(1));
+  }
+
+  return moneyToCents(trimmed);
+}
+
+function normalizeEqualSplitCents(totalCents: number, memberIds: string[]) {
   if (memberIds.length === 0) {
     return [];
   }
@@ -57,7 +83,10 @@ export function normalizeEqualSplit(totalCents: number, memberIds: string[]) {
   }));
 }
 
-export function normalizePercentageSplit(totalCents: number, entries: { userId: string; percentage: number }[]) {
+function normalizePercentageSplitCents(
+  totalCents: number,
+  entries: { userId: string; percentage: number }[]
+) {
   const percentageTotal = entries.reduce((total, entry) => total + entry.percentage, 0);
 
   if (Math.abs(percentageTotal - 100) > PERCENTAGE_SUM_TOLERANCE) {
@@ -73,7 +102,7 @@ export function normalizePercentageSplit(totalCents: number, entries: { userId: 
   }));
 }
 
-function normalizeExactSplit(
+function normalizeExactSplitCents(
   totalCents: number,
   entries: { userId: string; amountOwed?: string }[]
 ) {
@@ -97,7 +126,8 @@ function normalizeExactSplit(
   return normalizedEntries;
 }
 
-export function normalizeExpenseShares(input: NormalizeExpenseSharesInput) {
+export function normalizeExpenseShares(input: NormalizeExpenseSharesInput): MoneyAmount[] {
+  const totalCents = moneyToCents(input.total);
   const includedParticipants = input.participants.filter((participant) => participant.included);
 
   if (includedParticipants.length === 0) {
@@ -105,15 +135,17 @@ export function normalizeExpenseShares(input: NormalizeExpenseSharesInput) {
   }
 
   if (input.splitMode === "equal") {
-    return normalizeEqualSplit(
-      input.totalCents,
-      includedParticipants.map((participant) => participant.userId)
+    return normalizeEqualSplitCents(totalCents, includedParticipants.map((participant) => participant.userId)).map(
+      (entry) => ({
+        userId: entry.userId,
+        amount: centsToMoney(entry.amountCents)
+      })
     );
   }
 
   if (input.splitMode === "percentage") {
-    return normalizePercentageSplit(
-      input.totalCents,
+    return normalizePercentageSplitCents(
+      totalCents,
       includedParticipants.map((participant) => {
         if (participant.percentage === undefined) {
           throw new Error("Percentage split participants must include percentage.");
@@ -124,19 +156,25 @@ export function normalizeExpenseShares(input: NormalizeExpenseSharesInput) {
           percentage: participant.percentage
         };
       })
-    );
+    ).map((entry) => ({
+      userId: entry.userId,
+      amount: centsToMoney(entry.amountCents)
+    }));
   }
 
-  return normalizeExactSplit(
-    input.totalCents,
+  return normalizeExactSplitCents(
+    totalCents,
     includedParticipants.map((participant) => ({
       userId: participant.userId,
       amountOwed: participant.amountOwed
     }))
-  );
+  ).map((entry) => ({
+    userId: entry.userId,
+    amount: centsToMoney(entry.amountCents)
+  }));
 }
 
-export function deriveBalances(input: DeriveBalancesInput): BalanceSummary[] {
+export function deriveBalances(input: DeriveBalancesInput): MoneyBalance[] {
   const balances = new Map<string, number>();
 
   for (const memberId of input.memberIds) {
@@ -149,34 +187,36 @@ export function deriveBalances(input: DeriveBalancesInput): BalanceSummary[] {
 
   for (const expense of input.expenses) {
     for (const payer of expense.payers) {
-      adjustBalance(payer.userId, payer.amountCents);
+      adjustBalance(payer.userId, moneyToCents(payer.amount));
     }
 
     for (const share of expense.shares) {
-      adjustBalance(share.userId, -share.amountCents);
+      adjustBalance(share.userId, -moneyToCents(share.amount));
     }
   }
 
   for (const settlement of input.settlements) {
-    adjustBalance(settlement.fromUserId, -settlement.amountCents);
-    adjustBalance(settlement.toUserId, settlement.amountCents);
+    const amountCents = moneyToCents(settlement.amount);
+    adjustBalance(settlement.fromUserId, -amountCents);
+    adjustBalance(settlement.toUserId, amountCents);
   }
 
   return Array.from(balances.entries()).map(([userId, balanceCents]) => ({
     userId,
-    balanceCents
+    balance: centsToMoney(balanceCents)
   }));
 }
 
-export function suggestSettlements(balances: BalanceSummary[]): SettlementSuggestion[] {
+export function suggestSettlements(balances: MoneyBalance[]): MoneySettlementSuggestion[] {
   const workingBalances = balances
     .map((balance, index) => ({
       ...balance,
+      balanceCents: signedMoneyToCents(balance.balance),
       index
     }))
     .filter((balance) => balance.balanceCents !== 0);
 
-  const suggestions: SettlementSuggestion[] = [];
+  const suggestions: MoneySettlementSuggestion[] = [];
 
   while (true) {
     const creditors = workingBalances
@@ -209,7 +249,7 @@ export function suggestSettlements(balances: BalanceSummary[]): SettlementSugges
     suggestions.push({
       fromUserId: debtor.userId,
       toUserId: creditor.userId,
-      amountCents
+      amount: centsToMoney(amountCents)
     });
 
     creditor.balanceCents -= amountCents;
@@ -219,7 +259,7 @@ export function suggestSettlements(balances: BalanceSummary[]): SettlementSugges
   return suggestions;
 }
 
-export function redistributeDepartedMemberEntries(
+function redistributeDepartedMemberEntries(
   entries: LedgerEntry[],
   departedUserId: string,
   activeMemberIds: string[]
@@ -247,7 +287,7 @@ export function redistributeDepartedMemberEntries(
     }
   }
 
-  const redistributed = normalizeEqualSplit(departedAmountCents, activeMemberIds);
+  const redistributed = normalizeEqualSplitCents(departedAmountCents, activeMemberIds);
 
   for (const entry of redistributed) {
     amountsByUser.set(entry.userId, (amountsByUser.get(entry.userId) ?? 0) + entry.amountCents);
@@ -265,7 +305,27 @@ export function redistributeDepartedMemberExpense(
   activeMemberIds: string[]
 ) {
   return {
-    payers: redistributeDepartedMemberEntries(expense.payers, departedUserId, activeMemberIds),
-    shares: redistributeDepartedMemberEntries(expense.shares, departedUserId, activeMemberIds)
+    payers: redistributeDepartedMemberEntries(
+      expense.payers.map((entry) => ({
+        userId: entry.userId,
+        amountCents: moneyToCents(entry.amount)
+      })),
+      departedUserId,
+      activeMemberIds
+    ).map((entry) => ({
+      userId: entry.userId,
+      amount: centsToMoney(entry.amountCents)
+    })),
+    shares: redistributeDepartedMemberEntries(
+      expense.shares.map((entry) => ({
+        userId: entry.userId,
+        amountCents: moneyToCents(entry.amount)
+      })),
+      departedUserId,
+      activeMemberIds
+    ).map((entry) => ({
+      userId: entry.userId,
+      amount: centsToMoney(entry.amountCents)
+    }))
   };
 }

@@ -57,12 +57,12 @@ export type ExpenseParticipantInput = {
 
 export type LedgerAmount = {
   userId: string;
-  amountCents: number;
+  amount: string;
 };
 
 export type LedgerBalance = {
   userId: string;
-  balanceCents: number;
+  balance: string;
 };
 
 export type LedgerSettlement = {
@@ -80,7 +80,7 @@ export type LedgerSettlement = {
 export type LedgerSettlementSuggestion = {
   fromUserId: string;
   toUserId: string;
-  amountCents: number;
+  amount: string;
 };
 
 export type LedgerMember = {
@@ -93,7 +93,7 @@ export type LedgerMember = {
 
 export type LedgerExpenseShare = {
   userId: string;
-  amountOwed: string;
+  amount: string;
 };
 
 export type LedgerExpense = {
@@ -168,39 +168,22 @@ type LegacyExpenseInput = {
   createdByUserId: string;
   title: string;
   expenseDate: Date;
-  payers: ExpensePayerInput[];
-};
-
-type LedgerExpenseInput = LegacyExpenseInput & {
   category: ExpenseCategory;
   splitMode: ExpenseSplitMode;
   participants: ExpenseParticipantInput[];
+  payers: ExpensePayerInput[];
 };
 
-export type CreateExpenseInput = LegacyExpenseInput | LedgerExpenseInput;
+export type CreateExpenseInput = LegacyExpenseInput;
 
-export type UpdateExpenseInput = (
-  | {
-      expenseId: string;
-      title: string;
-      expenseDate: Date;
-      payers: ExpensePayerInput[];
-    }
-  | {
-      expenseId: string;
-      title: string;
-      expenseDate: Date;
-      payers: ExpensePayerInput[];
-      category: ExpenseCategory;
-      splitMode: ExpenseSplitMode;
-      participants: ExpenseParticipantInput[];
-    }
-);
-
-export type LedgerExpenseSubmission = LedgerExpenseInput;
-
-export type LedgerExpenseUpdateSubmission = LedgerExpenseInput & {
+export type UpdateExpenseInput = {
   expenseId: string;
+  title: string;
+  expenseDate: Date;
+  category: ExpenseCategory;
+  splitMode: ExpenseSplitMode;
+  participants: ExpenseParticipantInput[];
+  payers: ExpensePayerInput[];
 };
 
 export type GroupExpense = {
