@@ -149,6 +149,12 @@ export function GroupExpensesSection({
   }
 
   const orderedExpenses = [...expenses].sort((left, right) => {
+    const expenseDateDelta = new Date(left.expenseDate).getTime() - new Date(right.expenseDate).getTime();
+
+    if (expenseDateDelta !== 0) {
+      return expenseDateDelta;
+    }
+
     return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
   });
 

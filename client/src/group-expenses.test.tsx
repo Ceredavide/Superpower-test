@@ -79,8 +79,8 @@ describe("group expenses", () => {
               title: "Train tickets",
               expenseDate: "2026-04-06",
               totalAmount: "30.00",
-              createdAt: "2026-04-06T08:00:00.000Z",
-              updatedAt: "2026-04-06T08:00:00.000Z",
+              createdAt: "2026-04-09T08:00:00.000Z",
+              updatedAt: "2026-04-09T08:00:00.000Z",
               createdBy: { id: "user_2", email: "member@example.com", displayName: "Avery" },
               payers: [{ user: { id: "user_2", email: "member@example.com", displayName: "Avery" }, amountPaid: "30.00" }]
             },
@@ -90,8 +90,8 @@ describe("group expenses", () => {
               title: "Groceries",
               expenseDate: "2026-04-08",
               totalAmount: "20.00",
-              createdAt: "2026-04-08T08:00:00.000Z",
-              updatedAt: "2026-04-08T08:00:00.000Z",
+              createdAt: "2026-04-06T08:00:00.000Z",
+              updatedAt: "2026-04-06T08:00:00.000Z",
               createdBy: { id: "user_1", email: "owner@example.com", displayName: "Morgan" },
               payers: [
                 { user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" }, amountPaid: "12.50" },
