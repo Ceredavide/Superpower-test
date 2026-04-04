@@ -168,13 +168,26 @@ type LegacyExpenseInput = {
   createdByUserId: string;
   title: string;
   expenseDate: Date;
+  payers: ExpensePayerInput[];
+};
+
+type LegacyUpdateExpenseInput = {
+  expenseId: string;
+  title: string;
+  expenseDate: Date;
+  payers: ExpensePayerInput[];
+};
+
+export type CreateExpenseInput = {
+  groupId: string;
+  createdByUserId: string;
+  title: string;
+  expenseDate: Date;
   category: ExpenseCategory;
   splitMode: ExpenseSplitMode;
   participants: ExpenseParticipantInput[];
   payers: ExpensePayerInput[];
 };
-
-export type CreateExpenseInput = LegacyExpenseInput;
 
 export type UpdateExpenseInput = {
   expenseId: string;
@@ -233,10 +246,10 @@ export interface Store {
   acceptInvitation(invitationId: string, userId: string): Promise<unknown>;
   declineInvitation(invitationId: string, userId: string): Promise<unknown>;
   getDashboardData(userId: string): Promise<DashboardData>;
-  createExpense(input: CreateExpenseInput): Promise<GroupExpense>;
+  createExpense(input: CreateExpenseInput | LegacyExpenseInput): Promise<GroupExpense>;
   listExpensesForGroup(groupId: string): Promise<GroupExpense[]>;
   findExpenseById(expenseId: string): Promise<GroupExpense | null>;
-  updateExpense(input: UpdateExpenseInput): Promise<GroupExpense | null>;
+  updateExpense(input: UpdateExpenseInput | LegacyUpdateExpenseInput): Promise<GroupExpense | null>;
   deleteExpense(expenseId: string): Promise<boolean>;
   isExpenseCreator(expenseId: string, userId: string): Promise<boolean>;
 }
