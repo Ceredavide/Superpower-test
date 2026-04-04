@@ -86,22 +86,6 @@ describe("PrismaStore expense persistence", () => {
 
     prisma.expense.findMany.mockResolvedValue([
       {
-        id: "expense_1",
-        groupId: "group_1",
-        title: "Later expense",
-        expenseDate: new Date("2026-04-08T00:00:00.000Z"),
-        createdBy: { id: "user_1", email: "owner@example.com", displayName: "Morgan" },
-        createdAt: new Date("2026-04-08T12:00:00.000Z"),
-        updatedAt: new Date("2026-04-08T12:00:00.000Z"),
-        payers: [
-          {
-            id: "payer_1",
-            amountPaid: new Decimal("10.00"),
-            user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" }
-          }
-        ]
-      },
-      {
         id: "expense_2",
         groupId: "group_1",
         title: "Earlier expense",
@@ -116,6 +100,22 @@ describe("PrismaStore expense persistence", () => {
             user: { id: "user_2", email: "member@example.com", displayName: "Avery" }
           }
         ]
+      },
+      {
+        id: "expense_1",
+        groupId: "group_1",
+        title: "Later expense",
+        expenseDate: new Date("2026-04-08T00:00:00.000Z"),
+        createdBy: { id: "user_1", email: "owner@example.com", displayName: "Morgan" },
+        createdAt: new Date("2026-04-08T12:00:00.000Z"),
+        updatedAt: new Date("2026-04-08T12:00:00.000Z"),
+        payers: [
+          {
+            id: "payer_1",
+            amountPaid: new Decimal("10.00"),
+            user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" }
+          }
+        ]
       }
     ]);
 
@@ -128,8 +128,8 @@ describe("PrismaStore expense persistence", () => {
       })
     );
     expect(expenses.map((expense) => expense.title)).toEqual([
-      "Later expense",
-      "Earlier expense"
+      "Earlier expense",
+      "Later expense"
     ]);
 
     prisma.expense.findUnique.mockResolvedValueOnce({
