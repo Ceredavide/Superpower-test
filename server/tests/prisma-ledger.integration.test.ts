@@ -2,13 +2,14 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import { PrismaStore } from "../src/store/prisma-store";
+import type { Store } from "../src/store/types";
 
 const runIntegration = Boolean(process.env.DATABASE_URL);
 const maybeDescribe = runIntegration ? describe : describe.skip;
 
 maybeDescribe("Prisma ledger persistence integration", () => {
   const prisma = new PrismaClient();
-  const store = new PrismaStore(prisma);
+  const store: Store = new PrismaStore(prisma);
 
   let ownerId = "";
   let memberId = "";
@@ -157,7 +158,7 @@ maybeDescribe("Prisma ledger persistence integration", () => {
       [ownerId, "8.00"]
     ]);
 
-    const settlement = await (store as any).createSettlement({
+    const settlement = await store.createSettlement({
       groupId,
       fromUserId: memberId,
       toUserId: ownerId,
@@ -166,10 +167,7 @@ maybeDescribe("Prisma ledger persistence integration", () => {
       createdByUserId: ownerId
     });
 
-    expect({
-      ...settlement,
-      amount: settlement.amount.toFixed(2)
-    }).toMatchObject({
+    expect(settlement).toMatchObject({
       groupId,
       fromUserId: memberId,
       toUserId: ownerId,
@@ -191,44 +189,18 @@ maybeDescribe("Prisma ledger persistence integration", () => {
       createdByUserId: ownerId
     });
 
-    const memberBeforeInactive = await prisma.groupMembership.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId: memberId
-        }
-      }
+    const removedMember = await store.removeGroupMember(groupId, memberId);
+
+    expect(removedMember).toMatchObject({
+      id: memberId,
+      status: "inactive"
     });
 
-    expect(memberBeforeInactive?.status).toBe("active");
-    expect(memberBeforeInactive?.leftAt).toBeNull();
+    const ledger = await store.getLedger(groupId, ownerId);
 
-    const leftAt = new Date("2026-04-11T00:00:00.000Z");
-
-    await prisma.groupMembership.update({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId: memberId
-        }
-      },
-      data: {
-        status: "inactive",
-        leftAt
-      }
+    expect(ledger?.members.find((member) => member.id === memberId)).toMatchObject({
+      status: "inactive"
     });
-
-    const memberAfterInactive = await prisma.groupMembership.findUnique({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId: memberId
-        }
-      }
-    });
-
-    expect(memberAfterInactive?.status).toBe("inactive");
-    expect(memberAfterInactive?.leftAt).toEqual(leftAt);
     expect(await store.isGroupMember(groupId, memberId)).toBe(false);
   });
 });

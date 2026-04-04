@@ -1,10 +1,15 @@
 import type {
+  CreateSettlementInput,
   CreateExpenseInput,
   DashboardData,
   GroupDetail,
   GroupExpense,
+  GroupLedger,
   GroupSummary,
   InvitationSummary,
+  LedgerExpense,
+  LedgerMember,
+  LedgerSettlement,
   NewSessionInput,
   NewUserInput,
   PendingInvitation,
@@ -14,7 +19,7 @@ import type {
   UpdateDisplayNameInput,
   UpdateExpenseInput
 } from "../../src/store/types";
-import { normalizeExpenseShares } from "../../src/lib/ledger";
+import { deriveBalances, normalizeExpenseShares, suggestSettlements } from "../../src/lib/ledger";
 import { sumMoney } from "../../src/lib/money";
 
 type StoredGroup = {
@@ -97,6 +102,30 @@ function hasSplitDetails(
   }
 ): input is CreateExpenseInput | UpdateExpenseInput {
   return "participants" in input;
+}
+
+function toLedgerMember(entry: StoredMembership, user: StoredUser): LedgerMember {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    status: entry.status,
+    leftAt: entry.leftAt
+  };
+}
+
+function toLedgerSettlement(entry: StoredSettlement): LedgerSettlement {
+  return {
+    id: entry.id,
+    groupId: entry.groupId,
+    fromUserId: entry.fromUserId,
+    toUserId: entry.toUserId,
+    amount: entry.amount,
+    paidAt: entry.paidAt,
+    createdByUserId: entry.createdByUserId,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt
+  };
 }
 
 export class InMemoryStore implements Store {
@@ -367,6 +396,16 @@ export class InMemoryStore implements Store {
         leftAt: null,
         createdAt: new Date()
       });
+    } else {
+      const membership = this.memberships.find(
+        (entry) => entry.groupId === invitation.groupId && entry.userId === userId
+      );
+
+      if (membership) {
+        membership.role = "member";
+        membership.status = "active";
+        membership.leftAt = null;
+      }
     }
 
     return invitation;
@@ -390,6 +429,62 @@ export class InMemoryStore implements Store {
     return {
       groups: await this.listGroupsForUser(userId),
       invitations: await this.listPendingInvitationsForUser(userId)
+    };
+  }
+
+  async getLedger(groupId: string, viewerUserId: string): Promise<GroupLedger | null> {
+    const membership = this.memberships.find(
+      (entry) =>
+        entry.groupId === groupId && entry.userId === viewerUserId && entry.status === "active"
+    );
+
+    if (!membership) {
+      return null;
+    }
+
+    const groupMembers = this.memberships
+      .filter((entry) => entry.groupId === groupId)
+      .map((entry) => {
+        const user = this.users.find((candidate) => candidate.id === entry.userId)!;
+        return toLedgerMember(entry, user);
+      });
+
+    const ledgerExpenses = this.expenses
+      .filter((expense) => expense.groupId === groupId)
+      .sort((left, right) => {
+        const byDate = left.expenseDate.getTime() - right.expenseDate.getTime();
+        return byDate !== 0 ? byDate : left.createdAt.getTime() - right.createdAt.getTime();
+      })
+      .map((expense) => this.materializeLedgerExpense(expense));
+
+    const ledgerSettlements = this.settlements
+      .filter((settlement) => settlement.groupId === groupId)
+      .sort((left, right) => {
+        const byPaidAt = left.paidAt.getTime() - right.paidAt.getTime();
+        return byPaidAt !== 0 ? byPaidAt : left.createdAt.getTime() - right.createdAt.getTime();
+      })
+      .map(toLedgerSettlement);
+
+    const balances = deriveBalances({
+      memberIds: groupMembers.map((entry) => entry.id),
+      expenses: ledgerExpenses.map((expense) => ({
+        payers: expense.payers,
+        shares: expense.shares
+      })),
+      settlements: ledgerSettlements.map((settlement) => ({
+        fromUserId: settlement.fromUserId,
+        toUserId: settlement.toUserId,
+        amount: settlement.amount
+      }))
+    });
+
+    return {
+      groupId,
+      members: groupMembers,
+      expenses: ledgerExpenses,
+      balances,
+      settleUpSuggestions: suggestSettlements(balances),
+      settlements: ledgerSettlements
     };
   }
 
@@ -425,6 +520,34 @@ export class InMemoryStore implements Store {
         },
         amountPaid: payer.amountPaid
       }))
+    };
+  }
+
+  private materializeLedgerExpense(expense: StoredExpense): LedgerExpense {
+    const payers = this.expensePayers
+      .filter((entry) => entry.expenseId === expense.id)
+      .map((entry) => ({
+        userId: entry.userId,
+        amount: entry.amountPaid
+      }));
+    const shares = this.expenseShares
+      .filter((entry) => entry.expenseId === expense.id)
+      .map((entry) => ({
+        userId: entry.userId,
+        amount: entry.amount
+      }));
+
+    return {
+      id: expense.id,
+      groupId: expense.groupId,
+      title: expense.title,
+      category: expense.category,
+      splitMode: expense.splitMode,
+      expenseDate: expense.expenseDate,
+      createdAt: expense.createdAt,
+      updatedAt: expense.updatedAt,
+      payers,
+      shares
     };
   }
 
@@ -530,14 +653,7 @@ export class InMemoryStore implements Store {
     return this.materializeExpense(expense);
   }
 
-  createSettlement(input: {
-    groupId: string;
-    fromUserId: string;
-    toUserId: string;
-    amount: string;
-    paidAt: Date;
-    createdByUserId: string;
-  }) {
+  async createSettlement(input: CreateSettlementInput): Promise<LedgerSettlement> {
     const settlement: StoredSettlement = {
       id: createId("settlement"),
       groupId: input.groupId,
@@ -551,13 +667,30 @@ export class InMemoryStore implements Store {
     };
 
     this.settlements.push(settlement);
-    return settlement;
+    return toLedgerSettlement(settlement);
+  }
+
+  async removeGroupMember(groupId: string, memberId: string): Promise<LedgerMember | null> {
+    const membership = this.memberships.find(
+      (entry) => entry.groupId === groupId && entry.userId === memberId
+    );
+
+    if (!membership) {
+      return null;
+    }
+
+    membership.status = "inactive";
+    membership.leftAt = new Date();
+
+    const user = this.users.find((candidate) => candidate.id === memberId)!;
+    return toLedgerMember(membership, user);
   }
 
   async deleteExpense(expenseId: string): Promise<boolean> {
     const previousLength = this.expenses.length;
     this.expenses = this.expenses.filter((entry) => entry.id !== expenseId);
     this.expensePayers = this.expensePayers.filter((entry) => entry.expenseId !== expenseId);
+    this.expenseShares = this.expenseShares.filter((entry) => entry.expenseId !== expenseId);
     return this.expenses.length !== previousLength;
   }
 

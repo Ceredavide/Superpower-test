@@ -77,6 +77,15 @@ export type LedgerSettlement = {
   updatedAt: Date;
 };
 
+export type CreateSettlementInput = {
+  groupId: string;
+  fromUserId: string;
+  toUserId: string;
+  amount: string;
+  paidAt: Date;
+  createdByUserId: string;
+};
+
 export type LedgerSettlementSuggestion = {
   fromUserId: string;
   toUserId: string;
@@ -246,10 +255,13 @@ export interface Store {
   acceptInvitation(invitationId: string, userId: string): Promise<unknown>;
   declineInvitation(invitationId: string, userId: string): Promise<unknown>;
   getDashboardData(userId: string): Promise<DashboardData>;
+  getLedger(groupId: string, viewerUserId: string): Promise<GroupLedger | null>;
   createExpense(input: CreateExpenseInput | LegacyExpenseInput): Promise<GroupExpense>;
   listExpensesForGroup(groupId: string): Promise<GroupExpense[]>;
   findExpenseById(expenseId: string): Promise<GroupExpense | null>;
   updateExpense(input: UpdateExpenseInput | LegacyUpdateExpenseInput): Promise<GroupExpense | null>;
+  createSettlement(input: CreateSettlementInput): Promise<LedgerSettlement>;
+  removeGroupMember(groupId: string, memberId: string): Promise<LedgerMember | null>;
   deleteExpense(expenseId: string): Promise<boolean>;
   isExpenseCreator(expenseId: string, userId: string): Promise<boolean>;
 }

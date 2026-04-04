@@ -1,18 +1,23 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
 
-import { normalizeExpenseShares } from "../lib/ledger";
+import { deriveBalances, normalizeExpenseShares, suggestSettlements } from "../lib/ledger";
 import { normalizeMoneyInput, sumMoney } from "../lib/money";
 import type {
+  CreateSettlementInput,
   CreateExpenseInput,
   DashboardData,
   GroupDetail,
   GroupExpense,
+  GroupLedger,
   GroupSummary,
   InvitationSummary,
   NewSessionInput,
   NewUserInput,
   PendingInvitation,
+  LedgerExpense,
+  LedgerMember,
+  LedgerSettlement,
   Store,
   StoredSession,
   StoredUser,
@@ -88,6 +93,71 @@ function toGroupExpense(expense: ExpenseWithRelations): GroupExpense {
       },
       amountPaid: payer.amountPaid.toFixed(2)
     }))
+  };
+}
+
+function toLedgerExpense(expense: ExpenseWithRelations): LedgerExpense {
+  return {
+    id: expense.id,
+    groupId: expense.groupId,
+    title: expense.title,
+    category: expense.category,
+    splitMode: expense.splitMode,
+    expenseDate: expense.expenseDate,
+    createdAt: expense.createdAt,
+    updatedAt: expense.updatedAt,
+    payers: expense.payers.map((payer) => ({
+      userId: payer.user.id,
+      amount: payer.amountPaid.toFixed(2)
+    })),
+    shares: expense.shares.map((share) => ({
+      userId: share.user.id,
+      amount: share.amount.toFixed(2)
+    }))
+  };
+}
+
+function toLedgerMember(entry: {
+  id: string;
+  role: "owner" | "member";
+  status: "active" | "inactive";
+  leftAt: Date | null;
+  user: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
+}): LedgerMember {
+  return {
+    id: entry.user.id,
+    email: entry.user.email,
+    displayName: entry.user.displayName,
+    status: entry.status,
+    leftAt: entry.leftAt
+  };
+}
+
+function toLedgerSettlement(entry: {
+  id: string;
+  groupId: string;
+  fromUserId: string;
+  toUserId: string;
+  amount: Decimal;
+  paidAt: Date;
+  createdByUserId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}): LedgerSettlement {
+  return {
+    id: entry.id,
+    groupId: entry.groupId,
+    fromUserId: entry.fromUserId,
+    toUserId: entry.toUserId,
+    amount: entry.amount.toFixed(2),
+    paidAt: entry.paidAt,
+    createdByUserId: entry.createdByUserId,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt
   };
 }
 
@@ -430,7 +500,11 @@ export class PrismaStore implements Store {
           status: "active",
           leftAt: null
         },
-        update: {}
+        update: {
+          role: "member",
+          status: "active",
+          leftAt: null
+        }
       });
 
       return acceptedInvitation;
@@ -466,6 +540,60 @@ export class PrismaStore implements Store {
     ]);
 
     return { groups, invitations };
+  }
+
+  async getLedger(groupId: string, viewerUserId: string): Promise<GroupLedger | null> {
+    const membership = await this.prisma.groupMembership.findFirst({
+      where: {
+        groupId,
+        userId: viewerUserId,
+        status: "active"
+      }
+    });
+
+    if (!membership) {
+      return null;
+    }
+
+    const [memberships, expenses, settlements] = await Promise.all([
+      this.prisma.groupMembership.findMany({
+        where: { groupId },
+        include: { user: true },
+        orderBy: { createdAt: "asc" }
+      }),
+      this.prisma.expense.findMany({
+        where: { groupId },
+        include: expenseInclude,
+        orderBy: [{ expenseDate: "asc" }, { createdAt: "asc" }]
+      }),
+      this.prisma.settlement.findMany({
+        where: { groupId },
+        orderBy: [{ paidAt: "asc" }, { createdAt: "asc" }]
+      })
+    ]);
+
+    const ledgerExpenses = expenses.map(toLedgerExpense);
+    const balances = deriveBalances({
+      memberIds: memberships.map((entry) => entry.userId),
+      expenses: ledgerExpenses.map((expense) => ({
+        payers: expense.payers,
+        shares: expense.shares
+      })),
+      settlements: settlements.map((entry) => ({
+        fromUserId: entry.fromUserId,
+        toUserId: entry.toUserId,
+        amount: entry.amount.toFixed(2)
+      }))
+    });
+
+    return {
+      groupId,
+      members: memberships.map(toLedgerMember),
+      expenses: ledgerExpenses,
+      balances,
+      settleUpSuggestions: suggestSettlements(balances),
+      settlements: settlements.map(toLedgerSettlement)
+    };
   }
 
   async createExpense(input: CreateExpenseInput): Promise<GroupExpense> {
@@ -566,15 +694,8 @@ export class PrismaStore implements Store {
     return toGroupExpense(expense);
   }
 
-  createSettlement(input: {
-    groupId: string;
-    fromUserId: string;
-    toUserId: string;
-    amount: string;
-    paidAt: Date;
-    createdByUserId: string;
-  }) {
-    return this.prisma.settlement.create({
+  async createSettlement(input: CreateSettlementInput): Promise<LedgerSettlement> {
+    const settlement = await this.prisma.settlement.create({
       data: {
         groupId: input.groupId,
         fromUserId: input.fromUserId,
@@ -584,6 +705,44 @@ export class PrismaStore implements Store {
         createdByUserId: input.createdByUserId
       }
     });
+
+    return toLedgerSettlement(settlement);
+  }
+
+  async removeGroupMember(groupId: string, memberId: string): Promise<LedgerMember | null> {
+    const membership = await this.prisma.groupMembership.findUnique({
+      where: {
+        groupId_userId: {
+          groupId,
+          userId: memberId
+        }
+      },
+      include: {
+        user: true
+      }
+    });
+
+    if (!membership) {
+      return null;
+    }
+
+    const updated = await this.prisma.groupMembership.update({
+      where: {
+        groupId_userId: {
+          groupId,
+          userId: memberId
+        }
+      },
+      data: {
+        status: "inactive",
+        leftAt: new Date()
+      },
+      include: {
+        user: true
+      }
+    });
+
+    return toLedgerMember(updated);
   }
 
   async deleteExpense(expenseId: string): Promise<boolean> {
