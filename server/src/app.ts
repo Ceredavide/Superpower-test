@@ -7,9 +7,19 @@ import cors from "cors";
 import express from "express";
 import { z } from "zod";
 
-import { normalizeMoneyInput } from "./lib/money";
+import { normalizeExpenseShares } from "./lib/ledger";
+import { moneyToCents, normalizeMoneyInput, sumMoney } from "./lib/money";
 import { createSessionToken, hashSessionToken } from "./lib/session";
-import type { ExpensePayerInput, GroupExpense, Store, StoredUser } from "./store/types";
+import type {
+  ExpenseParticipantInput,
+  ExpensePayerInput,
+  ExpenseSplitMode,
+  GroupExpense,
+  GroupLedger,
+  LedgerSettlement,
+  Store,
+  StoredUser
+} from "./store/types";
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -35,10 +45,26 @@ const expensePayerSchema = z.object({
   amountPaid: z.string().trim().min(1)
 });
 
+const expenseParticipantSchema = z.object({
+  userId: z.string().min(1),
+  included: z.boolean().optional(),
+  percentage: z.union([z.string().trim().min(1), z.number().finite()]).optional(),
+  amountOwed: z.string().trim().min(1).optional()
+});
+
 const expenseSchema = z.object({
   title: z.string().trim().min(1),
+  category: z.enum(["food", "transport", "housing", "entertainment", "other"]).optional(),
+  splitMode: z.enum(["equal", "percentage", "exact"]).optional(),
   expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  payers: z.array(expensePayerSchema).min(1)
+  payers: z.array(expensePayerSchema).min(1),
+  participants: z.array(expenseParticipantSchema).optional()
+});
+
+const settlementSchema = z.object({
+  fromUserId: z.string().min(1),
+  toUserId: z.string().min(1),
+  amount: z.string().trim().min(1)
 });
 
 class ExpenseValidationError extends Error {}
@@ -77,6 +103,34 @@ function serializeExpense(expense: GroupExpense) {
   };
 }
 
+function serializeLedgerSettlement(settlement: LedgerSettlement) {
+  return {
+    ...settlement,
+    paidAt: settlement.paidAt.toISOString(),
+    createdAt: settlement.createdAt.toISOString(),
+    updatedAt: settlement.updatedAt.toISOString()
+  };
+}
+
+function serializeLedger(ledger: GroupLedger) {
+  return {
+    groupId: ledger.groupId,
+    members: ledger.members.map((member) => ({
+      ...member,
+      leftAt: member.leftAt ? member.leftAt.toISOString() : null
+    })),
+    expenses: ledger.expenses.map((expense) => ({
+      ...expense,
+      expenseDate: expense.expenseDate.toISOString().slice(0, 10),
+      createdAt: expense.createdAt.toISOString(),
+      updatedAt: expense.updatedAt.toISOString()
+    })),
+    balances: ledger.balances,
+    settleUpSuggestions: ledger.settleUpSuggestions,
+    settlements: ledger.settlements.map(serializeLedgerSettlement)
+  };
+}
+
 function parseExpenseDate(value: string) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
 
@@ -99,6 +153,21 @@ function parseExpenseDate(value: string) {
   }
 
   return parsed;
+}
+
+function signedMoneyToCents(value: string) {
+  const trimmed = value.trim();
+  const isNegative = trimmed.startsWith("-");
+  const unsigned = isNegative ? trimmed.slice(1) : trimmed;
+
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(unsigned)) {
+    throw new Error("Amounts must be positive numbers with up to 2 decimal places.");
+  }
+
+  const [whole, fraction = ""] = unsigned.split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+
+  return isNegative ? -cents : cents;
 }
 
 export function createApp({
@@ -200,6 +269,126 @@ export function createApp({
     }
 
     return normalizedPayers;
+  }
+
+  async function validateExpenseParticipants(input: {
+    groupId: string;
+    viewerUserId: string;
+    splitMode: ExpenseSplitMode;
+    participants?: Array<{
+      userId: string;
+      included?: boolean;
+      percentage?: string | number;
+      amountOwed?: string;
+    }>;
+  }) {
+    const group = await store.getGroupDetail(input.groupId, input.viewerUserId);
+
+    if (!group) {
+      throw new ExpenseValidationError("Group not found.");
+    }
+
+    if (!input.participants) {
+      const defaultParticipants: ExpenseParticipantInput[] = group.members.map((member) => ({
+        userId: member.id,
+        included: true
+      }));
+
+      return defaultParticipants;
+    }
+
+    const activeMemberIds = new Set(group.members.map((member) => member.id));
+    const seen = new Set<string>();
+
+    return input.participants.map((participant) => {
+      if (seen.has(participant.userId)) {
+        throw new ExpenseValidationError("Each participant can only appear once per expense.");
+      }
+
+      if (!activeMemberIds.has(participant.userId)) {
+        throw new ExpenseValidationError("Each participant must be a current group member.");
+      }
+
+      seen.add(participant.userId);
+
+      const included = participant.included ?? true;
+      const hasSplitDetails =
+        participant.percentage !== undefined || participant.amountOwed !== undefined;
+
+      if (!included && hasSplitDetails) {
+        throw new ExpenseValidationError("Excluded participants cannot include split details.");
+      }
+
+      const normalizedParticipant: ExpenseParticipantInput = {
+        userId: participant.userId,
+        included
+      };
+
+      if (participant.percentage !== undefined) {
+        const percentage =
+          typeof participant.percentage === "number"
+            ? participant.percentage
+            : Number(participant.percentage.trim());
+
+        if (!Number.isFinite(percentage)) {
+          throw new ExpenseValidationError("Percentages must be valid numbers.");
+        }
+
+        normalizedParticipant.percentage = percentage;
+      }
+
+      if (participant.amountOwed !== undefined) {
+        normalizedParticipant.amountOwed = normalizeMoneyInput(participant.amountOwed);
+      }
+
+      return normalizedParticipant;
+    });
+  }
+
+  async function buildRichExpenseInput(input: {
+    groupId: string;
+    viewerUserId: string;
+    title: string;
+    expenseDate: string;
+    category?: "food" | "transport" | "housing" | "entertainment" | "other";
+    splitMode?: ExpenseSplitMode;
+    payers: ExpensePayerInput[];
+    participants?: Array<{
+      userId: string;
+      included?: boolean;
+      percentage?: string | number;
+      amountOwed?: string;
+    }>;
+  }) {
+    const splitMode = input.splitMode ?? "equal";
+    const expenseDate = parseExpenseDate(input.expenseDate);
+    const normalizedPayers = await validateExpensePayers(input.groupId, input.payers);
+    const normalizedParticipants = await validateExpenseParticipants({
+      groupId: input.groupId,
+      viewerUserId: input.viewerUserId,
+      splitMode,
+      participants: input.participants
+    });
+    const totalAmount = sumMoney(normalizedPayers.map((payer) => payer.amountPaid));
+
+    try {
+      normalizeExpenseShares({
+        splitMode,
+        total: totalAmount,
+        participants: normalizedParticipants
+      });
+    } catch (error) {
+      throw new ExpenseValidationError((error as Error).message);
+    }
+
+    return {
+      title: input.title.trim(),
+      category: input.category ?? "other",
+      splitMode,
+      expenseDate,
+      payers: normalizedPayers,
+      participants: normalizedParticipants
+    };
   }
 
   app.post("/auth/register", async (request, response) => {
@@ -418,6 +607,28 @@ export function createApp({
   });
 
   if (store.supportsExpenses()) {
+    app.get("/groups/:groupId/ledger", async (request, response) => {
+      const user = await requireUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const isMember = await store.isGroupMember(request.params.groupId, user.id);
+
+      if (!isMember) {
+        return response.status(403).json({ error: "Only group members can view the ledger." });
+      }
+
+      const ledger = await store.getLedger(request.params.groupId, user.id);
+
+      if (!ledger) {
+        return response.status(404).json({ error: "Group not found." });
+      }
+
+      return response.status(200).json(serializeLedger(ledger));
+    });
+
     app.get("/groups/:groupId/expenses", async (request, response) => {
       const user = await requireUser(request, response);
 
@@ -458,17 +669,18 @@ export function createApp({
         return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
       }
 
-    try {
-      const expenseDate = parseExpenseDate(parsed.data.expenseDate);
-      const normalizedPayers = await validateExpensePayers(request.params.groupId, parsed.data.payers);
+      try {
+        const expenseInput = await buildRichExpenseInput({
+          groupId: request.params.groupId,
+          viewerUserId: user.id,
+          ...parsed.data
+        });
 
-      const expense = await store.createExpense({
-        groupId: request.params.groupId,
-        createdByUserId: user.id,
-        title: parsed.data.title.trim(),
-        expenseDate,
-        payers: normalizedPayers
-      });
+        const expense = await store.createExpense({
+          groupId: request.params.groupId,
+          createdByUserId: user.id,
+          ...expenseInput
+        });
 
         return response.status(201).json({ expense: serializeExpense(expense) });
       } catch (error) {
@@ -503,16 +715,19 @@ export function createApp({
         return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
       }
 
-    try {
-      const expenseDate = parseExpenseDate(parsed.data.expenseDate);
-      const normalizedPayers = await validateExpensePayers(expense.groupId, parsed.data.payers);
+      try {
+        const expenseInput = await buildRichExpenseInput({
+          groupId: expense.groupId,
+          viewerUserId: user.id,
+          ...parsed.data,
+          category: parsed.data.category ?? expense.category ?? "other",
+          splitMode: parsed.data.splitMode ?? expense.splitMode ?? "equal"
+        });
 
-      const updatedExpense = await store.updateExpense({
-        expenseId: expense.id,
-        title: parsed.data.title.trim(),
-        expenseDate,
-        payers: normalizedPayers
-      });
+        const updatedExpense = await store.updateExpense({
+          expenseId: expense.id,
+          ...expenseInput
+        });
 
         if (!updatedExpense) {
           return response.status(404).json({ error: "Expense not found." });
@@ -526,6 +741,124 @@ export function createApp({
 
         throw error;
       }
+    });
+
+    app.post("/groups/:groupId/settlements", async (request, response) => {
+      const user = await requireUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const isMember = await store.isGroupMember(request.params.groupId, user.id);
+
+      if (!isMember) {
+        return response.status(403).json({ error: "Only group members can record settlements." });
+      }
+
+      const parsed = settlementSchema.safeParse(request.body);
+
+      if (!parsed.success) {
+        return response.status(400).json({ error: "Enter who paid whom and a valid amount." });
+      }
+
+      try {
+        const amount = normalizeMoneyInput(parsed.data.amount);
+        const amountCents = moneyToCents(amount);
+
+        if (parsed.data.fromUserId === parsed.data.toUserId) {
+          throw new ExpenseValidationError("Settlement payer and payee must be different members.");
+        }
+
+        const ledger = await store.getLedger(request.params.groupId, user.id);
+
+        if (!ledger) {
+          return response.status(404).json({ error: "Group not found." });
+        }
+
+        const activeMemberIds = new Set(ledger.members.map((member) => member.id));
+
+        if (
+          !activeMemberIds.has(parsed.data.fromUserId) ||
+          !activeMemberIds.has(parsed.data.toUserId)
+        ) {
+          throw new ExpenseValidationError("Settlements can only involve active group members.");
+        }
+
+        const balances = new Map(ledger.balances.map((balance) => [balance.userId, balance.balance]));
+        const fromBalanceCents = signedMoneyToCents(balances.get(parsed.data.fromUserId) ?? "0.00");
+        const toBalanceCents = signedMoneyToCents(balances.get(parsed.data.toUserId) ?? "0.00");
+        const maxSettlementCents = Math.min(
+          Math.max(-fromBalanceCents, 0),
+          Math.max(toBalanceCents, 0)
+        );
+
+        if (amountCents > maxSettlementCents) {
+          throw new ExpenseValidationError(
+            "Settlement amount exceeds the current outstanding balance."
+          );
+        }
+
+        const settlement = await store.createSettlement({
+          groupId: request.params.groupId,
+          fromUserId: parsed.data.fromUserId,
+          toUserId: parsed.data.toUserId,
+          amount,
+          paidAt: new Date(),
+          createdByUserId: user.id
+        });
+
+        return response.status(201).json({ settlement: serializeLedgerSettlement(settlement) });
+      } catch (error) {
+        if (error instanceof ExpenseValidationError) {
+          return response.status(400).json({ error: error.message });
+        }
+
+        if ((error as Error).message === "Amounts must be positive numbers with up to 2 decimal places.") {
+          return response.status(400).json({ error: (error as Error).message });
+        }
+
+        throw error;
+      }
+    });
+
+    app.post("/groups/:groupId/members/:memberId/remove", async (request, response) => {
+      const user = await requireUser(request, response);
+
+      if (!user) {
+        return;
+      }
+
+      const isOwner = await store.isGroupOwner(request.params.groupId, user.id);
+
+      if (!isOwner) {
+        return response.status(403).json({ error: "Only group owners can remove members." });
+      }
+
+      const group = await store.getGroupDetail(request.params.groupId, user.id);
+
+      if (!group) {
+        return response.status(404).json({ error: "Group not found." });
+      }
+
+      if (!group.members.some((member) => member.id === request.params.memberId)) {
+        return response.status(404).json({ error: "Member not found." });
+      }
+
+      if (group.members.length <= 1) {
+        return response.status(400).json({ error: "You cannot remove the last active member." });
+      }
+
+      const updatedGroup = await store.removeGroupMember(
+        request.params.groupId,
+        request.params.memberId
+      );
+
+      if (!updatedGroup) {
+        return response.status(400).json({ error: "Unable to remove that member." });
+      }
+
+      return response.status(200).json({ group: updatedGroup });
     });
 
     app.delete("/expenses/:expenseId", async (request, response) => {
