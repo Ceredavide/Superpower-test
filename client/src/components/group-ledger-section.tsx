@@ -51,6 +51,8 @@ type ExpenseView = {
   }>;
 };
 
+type ExpenseCreatorCache = Record<string, NonNullable<ExpenseView["createdBy"]>>;
+
 function getDefaultPayerUserId(group: GroupDetail, currentUserId: string) {
   return group.members.some((member) => member.id === currentUserId)
     ? currentUserId
@@ -178,26 +180,38 @@ function derivePercentages(
   return result;
 }
 
-function buildNameMap(group: GroupDetail, ledger: GroupLedger | null, expenses: GroupExpense[]) {
-  const entries = new Map<string, string>();
+function collectNameEntries(group: GroupDetail, ledger: GroupLedger | null, expenses: GroupExpense[]) {
+  const entries: Array<[string, string]> = [];
 
   for (const member of group.members) {
-    entries.set(member.id, member.displayName ?? member.email);
+    entries.push([member.id, member.displayName ?? member.email]);
   }
 
   for (const member of ledger?.members ?? []) {
-    entries.set(member.id, member.displayName ?? member.email);
+    entries.push([member.id, member.displayName ?? member.email]);
   }
 
   for (const expense of expenses) {
-    entries.set(
-      expense.createdBy.id,
-      expense.createdBy.displayName ?? expense.createdBy.email
-    );
+    entries.push([expense.createdBy.id, expense.createdBy.displayName ?? expense.createdBy.email]);
 
     for (const payer of expense.payers) {
-      entries.set(payer.user.id, payer.user.displayName ?? payer.user.email);
+      entries.push([payer.user.id, payer.user.displayName ?? payer.user.email]);
     }
+  }
+
+  return entries;
+}
+
+function buildNameMap(
+  cachedNames: Record<string, string>,
+  group: GroupDetail,
+  ledger: GroupLedger | null,
+  expenses: GroupExpense[]
+) {
+  const entries = new Map<string, string>(Object.entries(cachedNames));
+
+  for (const [userId, label] of collectNameEntries(group, ledger, expenses)) {
+    entries.set(userId, label);
   }
 
   return entries;
@@ -206,7 +220,8 @@ function buildNameMap(group: GroupDetail, ledger: GroupLedger | null, expenses: 
 function mergeExpenses(
   expenses: GroupExpense[],
   ledger: GroupLedger | null,
-  nameMap: Map<string, string>
+  nameMap: Map<string, string>,
+  creatorCache: ExpenseCreatorCache
 ): ExpenseView[] {
   const legacyById = new Map(expenses.map((expense) => [expense.id, expense]));
   const ledgerById = new Map((ledger?.expenses ?? []).map((expense) => [expense.id, expense]));
@@ -215,32 +230,33 @@ function mergeExpenses(
   return Array.from(ids).map((id) => {
     const legacyExpense = legacyById.get(id);
     const ledgerExpense = ledgerById.get(id);
+    const hasLedgerExpense = Boolean(ledgerExpense);
+    const totalAmountFromLedger = formatCents(
+      (ledgerExpense?.payers ?? []).reduce((sum, payer) => sum + parseAmountToCents(payer.amount), 0)
+    );
 
     return {
       id,
-      title: legacyExpense?.title ?? ledgerExpense?.title ?? "Untitled expense",
-      category: ledgerExpense?.category ?? legacyExpense?.category ?? "other",
-      splitMode: ledgerExpense?.splitMode ?? legacyExpense?.splitMode ?? "equal",
-      expenseDate: legacyExpense?.expenseDate ?? ledgerExpense?.expenseDate ?? "",
-      totalAmount:
-        legacyExpense?.totalAmount ??
-        formatCents(
-          (ledgerExpense?.payers ?? []).reduce((sum, payer) => sum + parseAmountToCents(payer.amount), 0)
-        ),
-      createdAt: legacyExpense?.createdAt ?? ledgerExpense?.createdAt ?? "",
-      updatedAt: legacyExpense?.updatedAt ?? ledgerExpense?.updatedAt ?? "",
-      createdBy: legacyExpense?.createdBy ?? null,
+      title: (hasLedgerExpense ? ledgerExpense?.title : legacyExpense?.title) ?? "Untitled expense",
+      category: (hasLedgerExpense ? ledgerExpense?.category : legacyExpense?.category) ?? "other",
+      splitMode: (hasLedgerExpense ? ledgerExpense?.splitMode : legacyExpense?.splitMode) ?? "equal",
+      expenseDate: (hasLedgerExpense ? ledgerExpense?.expenseDate : legacyExpense?.expenseDate) ?? "",
+      totalAmount: hasLedgerExpense ? totalAmountFromLedger : legacyExpense?.totalAmount ?? "0.00",
+      createdAt: (hasLedgerExpense ? ledgerExpense?.createdAt : legacyExpense?.createdAt) ?? "",
+      updatedAt: (hasLedgerExpense ? ledgerExpense?.updatedAt : legacyExpense?.updatedAt) ?? "",
+      createdBy: legacyExpense?.createdBy ?? creatorCache[id] ?? null,
       payers:
-        legacyExpense?.payers.map((payer) => ({
-          userId: payer.user.id,
-          label: payer.user.displayName ?? payer.user.email,
-          amountPaid: payer.amountPaid
-        })) ??
-        (ledgerExpense?.payers ?? []).map((payer) => ({
-          userId: payer.userId,
-          label: nameMap.get(payer.userId) ?? payer.userId,
-          amountPaid: payer.amount
-        })),
+        hasLedgerExpense
+          ? (ledgerExpense?.payers ?? []).map((payer) => ({
+              userId: payer.userId,
+              label: nameMap.get(payer.userId) ?? payer.userId,
+              amountPaid: payer.amount
+            }))
+          : (legacyExpense?.payers ?? []).map((payer) => ({
+              userId: payer.user.id,
+              label: payer.user.displayName ?? payer.user.email,
+              amountPaid: payer.amountPaid
+            })),
       shares: ledgerExpense?.shares ?? []
     };
   });
@@ -321,6 +337,8 @@ export function GroupLedgerSection({
   const [isSaving, setIsSaving] = useState(false);
   const [isSettlingKey, setIsSettlingKey] = useState<string | null>(null);
   const [hasLedgerSupport, setHasLedgerSupport] = useState(false);
+  const [cachedNames, setCachedNames] = useState<Record<string, string>>({});
+  const [cachedExpenseCreators, setCachedExpenseCreators] = useState<ExpenseCreatorCache>({});
 
   const memberIdsSignature = group.members.map((member) => member.id).join(",");
 
@@ -377,9 +395,48 @@ export function GroupLedgerSection({
     setSuccessMessage("");
   }, [group.id, currentUserId, memberIdsSignature]);
 
+  useEffect(() => {
+    setCachedNames((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const [userId, label] of collectNameEntries(group, ledger, expenses)) {
+        if (next[userId] !== label) {
+          next[userId] = label;
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [group, ledger, expenses]);
+
+  useEffect(() => {
+    setCachedExpenseCreators((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const expense of expenses) {
+        const cachedCreator = next[expense.id];
+
+        if (
+          !cachedCreator ||
+          cachedCreator.id !== expense.createdBy.id ||
+          cachedCreator.email !== expense.createdBy.email ||
+          cachedCreator.displayName !== expense.createdBy.displayName
+        ) {
+          next[expense.id] = expense.createdBy;
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [expenses]);
+
   const liveTotal = calculateDraftTotal(draft.payers);
-  const nameMap = buildNameMap(group, ledger, expenses);
-  const orderedExpenses = orderExpenses(mergeExpenses(expenses, ledger, nameMap));
+  const nameMap = buildNameMap(cachedNames, group, ledger, expenses);
+  const orderedExpenses = orderExpenses(mergeExpenses(expenses, ledger, nameMap, cachedExpenseCreators));
 
   function updatePayer(index: number, key: keyof ExpenseDraftPayer, value: string) {
     setDraft((current) => ({

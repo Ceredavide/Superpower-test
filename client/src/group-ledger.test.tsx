@@ -297,6 +297,31 @@ describe("group ledger", () => {
             }
           ]
         })
+      },
+      {
+        path: "/groups/group_1/expenses",
+        body: {
+          expenses: [
+            {
+              id: "expense_1",
+              groupId: "group_1",
+              title: "House dinner",
+              category: "food",
+              splitMode: "equal",
+              expenseDate: "2026-04-10",
+              totalAmount: "24.00",
+              createdAt: "2026-04-10T08:00:00.000Z",
+              updatedAt: "2026-04-10T08:00:00.000Z",
+              createdBy: { id: "user_1", email: "owner@example.com", displayName: "Morgan" },
+              payers: [
+                {
+                  user: { id: "user_2", email: "member@example.com", displayName: "Avery" },
+                  amountPaid: "24.00"
+                }
+              ]
+            }
+          ]
+        }
       }
     ]);
 
@@ -370,5 +395,208 @@ describe("group ledger", () => {
     expect(await screen.findByText("Member removed.")).toBeInTheDocument();
     expect(screen.queryByText("Avery")).toBeNull();
     expect(screen.getAllByText("Jules").length).toBeGreaterThan(0);
+  });
+
+  test("keeps expense rendering and edit hydration aligned with the ledger after member removal", async () => {
+    installFetchMock([
+      {
+        path: "/auth/me",
+        body: { user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" } }
+      },
+      { path: "/groups/group_1", body: buildGroupResponse() },
+      {
+        path: "/groups/group_1/ledger",
+        body: buildLedgerResponse({
+          expenses: [
+            {
+              id: "expense_1",
+              groupId: "group_1",
+              title: "House dinner",
+              category: "food",
+              splitMode: "equal",
+              expenseDate: "2026-04-10",
+              createdAt: "2026-04-10T08:00:00.000Z",
+              updatedAt: "2026-04-10T08:00:00.000Z",
+              payers: [{ userId: "user_2", amount: "24.00" }],
+              shares: [
+                { userId: "user_1", amount: "12.00" },
+                { userId: "user_2", amount: "12.00" }
+              ]
+            }
+          ]
+        })
+      },
+      {
+        path: "/groups/group_1/expenses",
+        body: {
+          expenses: [
+            {
+              id: "expense_1",
+              groupId: "group_1",
+              title: "House dinner",
+              category: "food",
+              splitMode: "equal",
+              expenseDate: "2026-04-10",
+              totalAmount: "24.00",
+              createdAt: "2026-04-10T08:00:00.000Z",
+              updatedAt: "2026-04-10T08:00:00.000Z",
+              createdBy: { id: "user_1", email: "owner@example.com", displayName: "Morgan" },
+              payers: [
+                {
+                  user: { id: "user_2", email: "member@example.com", displayName: "Avery" },
+                  amountPaid: "24.00"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        method: "POST",
+        path: "/groups/group_1/members/user_2/remove",
+        body: buildGroupResponse(["user_1", "user_3"])
+      },
+      {
+        path: "/groups/group_1/ledger",
+        body: buildLedgerResponse({
+          members: [
+            {
+              id: "user_1",
+              email: "owner@example.com",
+              displayName: "Morgan",
+              status: "active",
+              leftAt: null
+            },
+            {
+              id: "user_3",
+              email: "third@example.com",
+              displayName: "Jules",
+              status: "active",
+              leftAt: null
+            }
+          ],
+          expenses: [
+            {
+              id: "expense_1",
+              groupId: "group_1",
+              title: "House dinner",
+              category: "food",
+              splitMode: "equal",
+              expenseDate: "2026-04-10",
+              createdAt: "2026-04-10T08:00:00.000Z",
+              updatedAt: "2026-04-10T09:00:00.000Z",
+              payers: [
+                { userId: "user_1", amount: "12.00" },
+                { userId: "user_3", amount: "12.00" }
+              ],
+              shares: [
+                { userId: "user_1", amount: "12.00" },
+                { userId: "user_3", amount: "12.00" }
+              ]
+            }
+          ]
+        })
+      },
+      { path: "/groups/group_1/expenses", body: { expenses: [] } }
+    ]);
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Avery paid 24.00");
+    const removeButtons = await screen.findAllByRole("button", { name: "Remove member" });
+    await user.click(removeButtons[0]);
+
+    expect(await screen.findByText("Member removed.")).toBeInTheDocument();
+    expect(screen.queryByText("Avery paid 24.00")).toBeNull();
+    expect(screen.getByText("Morgan paid 12.00")).toBeInTheDocument();
+    expect(screen.getByText("Jules paid 12.00")).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Edit expense" }));
+
+    expect(screen.getByLabelText("Payer 1")).toHaveValue("user_1");
+    expect(screen.getByLabelText("Amount paid by payer 1")).toHaveValue("12.00");
+    expect(screen.getByLabelText("Payer 2")).toHaveValue("user_3");
+    expect(screen.getByLabelText("Amount paid by payer 2")).toHaveValue("12.00");
+  });
+
+  test("keeps removed member names in settlement history after the active roster changes", async () => {
+    installFetchMock([
+      {
+        path: "/auth/me",
+        body: { user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" } }
+      },
+      { path: "/groups/group_1", body: buildGroupResponse() },
+      {
+        path: "/groups/group_1/ledger",
+        body: buildLedgerResponse({
+          settlements: [
+            {
+              id: "settlement_1",
+              groupId: "group_1",
+              fromUserId: "user_2",
+              toUserId: "user_1",
+              amount: "5.00",
+              paidAt: "2026-04-10T09:30:00.000Z",
+              createdByUserId: "user_1",
+              createdAt: "2026-04-10T09:30:00.000Z",
+              updatedAt: "2026-04-10T09:30:00.000Z"
+            }
+          ]
+        })
+      },
+      { path: "/groups/group_1/expenses", body: { expenses: [] } },
+      {
+        method: "POST",
+        path: "/groups/group_1/members/user_2/remove",
+        body: buildGroupResponse(["user_1", "user_3"])
+      },
+      {
+        path: "/groups/group_1/ledger",
+        body: buildLedgerResponse({
+          members: [
+            {
+              id: "user_1",
+              email: "owner@example.com",
+              displayName: "Morgan",
+              status: "active",
+              leftAt: null
+            },
+            {
+              id: "user_3",
+              email: "third@example.com",
+              displayName: "Jules",
+              status: "active",
+              leftAt: null
+            }
+          ],
+          settlements: [
+            {
+              id: "settlement_1",
+              groupId: "group_1",
+              fromUserId: "user_2",
+              toUserId: "user_1",
+              amount: "5.00",
+              paidAt: "2026-04-10T09:30:00.000Z",
+              createdByUserId: "user_1",
+              createdAt: "2026-04-10T09:30:00.000Z",
+              updatedAt: "2026-04-10T09:30:00.000Z"
+            }
+          ]
+        })
+      }
+    ]);
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("Avery paid Morgan 5.00")).toBeInTheDocument();
+
+    const removeButtons = await screen.findAllByRole("button", { name: "Remove member" });
+    await user.click(removeButtons[0]);
+
+    expect(await screen.findByText("Member removed.")).toBeInTheDocument();
+    expect(screen.getByText("Avery paid Morgan 5.00")).toBeInTheDocument();
+    expect(screen.queryByText("user_2 paid Morgan 5.00")).toBeNull();
   });
 });
