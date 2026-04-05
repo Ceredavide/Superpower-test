@@ -53,6 +53,10 @@ type ExpenseView = {
 
 type ExpenseCreatorCache = Record<string, NonNullable<ExpenseView["createdBy"]>>;
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof ApiError ? error.message : fallback;
+}
+
 function getDefaultPayerUserId(group: GroupDetail, currentUserId: string) {
   return group.members.some((member) => member.id === currentUserId)
     ? currentUserId
@@ -348,6 +352,7 @@ export function GroupLedgerSection({
   const [draft, setDraft] = useState<ExpenseDraft>(() => createEmptyDraft(group, currentUserId));
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [ledgerError, setLedgerError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -365,27 +370,28 @@ export function GroupLedgerSection({
       api.getGroupLedger(group.id),
       api.listExpenses(group.id)
     ]);
+    const ledgerLoaded = ledgerResult.status === "fulfilled";
 
-    if (ledgerResult.status === "fulfilled") {
+    if (ledgerLoaded) {
       setLedger(ledgerResult.value);
       setHasLedgerSupport(true);
+      setLedgerError("");
     } else {
       setLedger(null);
       setHasLedgerSupport(false);
+      setLedgerError(getErrorMessage(ledgerResult.reason, "Unable to load the group ledger."));
     }
 
     if (expensesResult.status === "fulfilled") {
       setExpenses(expensesResult.value.expenses);
+    } else {
+      setExpenses([]);
     }
 
-    if (expensesResult.status === "rejected") {
-      setError(
-        expensesResult.reason instanceof ApiError
-          ? expensesResult.reason.message
-          : "Unable to load expenses."
-      );
-    } else {
+    if (ledgerLoaded || expensesResult.status === "fulfilled") {
       setError("");
+    } else {
+      setError(getErrorMessage(expensesResult.reason, "Unable to load expenses."));
     }
 
     setIsLoading(false);
@@ -399,8 +405,9 @@ export function GroupLedgerSection({
     try {
       const response = await api.getGroupLedger(group.id);
       setLedger(response);
-    } catch {
-      // Keep the last successful ledger view if a refresh is unavailable.
+      setLedgerError("");
+    } catch (caughtError) {
+      setLedgerError(getErrorMessage(caughtError, "Unable to refresh the group ledger."));
     }
   }
 
@@ -408,6 +415,7 @@ export function GroupLedgerSection({
     void loadWorkspace();
     setDraft(createEmptyDraft(group, currentUserId));
     setEditingExpenseId(null);
+    setLedgerError("");
     setSuccessMessage("");
   }, [group.id, currentUserId, memberIdsSignature]);
 
@@ -820,6 +828,7 @@ export function GroupLedgerSection({
         </div>
       </form>
 
+      {ledgerError ? <p className="form-error">{ledgerError}</p> : null}
       {error ? <p className="form-error">{error}</p> : null}
       {successMessage ? <p className="form-success">{successMessage}</p> : null}
       {isLoading ? <p className="muted-copy">Loading expenses...</p> : null}

@@ -298,6 +298,130 @@ describe("group ledger", () => {
     expect(within(history).queryByText("user_2 paid Morgan 5.00")).not.toBeInTheDocument();
   });
 
+  test("shows a visible error when the ledger fails to load", async () => {
+    installFetchMock([
+      {
+        path: "/auth/me",
+        body: { user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" } }
+      },
+      { path: "/groups/group_1", body: buildGroupResponse() },
+      {
+        path: "/groups/group_1/ledger",
+        status: 503,
+        body: { error: "Ledger is temporarily unavailable." }
+      },
+      { path: "/groups/group_1/expenses", body: { expenses: [] } }
+    ]);
+
+    render(<App />);
+
+    expect(await screen.findByText("Ledger is temporarily unavailable.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Current balances" })).toBeNull();
+  });
+
+  test("renders the ledger workspace when ledger data loads but /expenses fails", async () => {
+    installFetchMock([
+      {
+        path: "/auth/me",
+        body: { user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" } }
+      },
+      { path: "/groups/group_1", body: buildGroupResponse() },
+      {
+        path: "/groups/group_1/ledger",
+        body: buildLedgerResponse({
+          expenses: [
+            {
+              id: "expense_1",
+              groupId: "group_1",
+              title: "House dinner",
+              category: "food",
+              splitMode: "equal",
+              expenseDate: "2026-04-10",
+              createdAt: "2026-04-10T08:00:00.000Z",
+              updatedAt: "2026-04-10T08:00:00.000Z",
+              payers: [{ userId: "user_2", amount: "24.00" }],
+              shares: [
+                { userId: "user_1", amount: "12.00" },
+                { userId: "user_2", amount: "12.00" }
+              ]
+            }
+          ],
+          balances: [
+            { userId: "user_1", balance: "12.00" },
+            { userId: "user_2", balance: "-12.00" },
+            { userId: "user_3", balance: "0.00" }
+          ]
+        })
+      },
+      {
+        path: "/groups/group_1/expenses",
+        status: 503,
+        body: { error: "Legacy expenses are unavailable." }
+      }
+    ]);
+
+    render(<App />);
+
+    expect(await screen.findByText("House dinner")).toBeInTheDocument();
+    expect(screen.getByText("Avery paid 24.00")).toBeInTheDocument();
+    expect(screen.getByText("Morgan is owed 12.00")).toBeInTheDocument();
+    expect(screen.queryByText("Legacy expenses are unavailable.")).toBeNull();
+  });
+
+  test("shows a visible error when a ledger refresh fails", async () => {
+    installFetchMock([
+      {
+        path: "/auth/me",
+        body: { user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" } }
+      },
+      { path: "/groups/group_1", body: buildGroupResponse() },
+      {
+        path: "/groups/group_1/ledger",
+        body: buildLedgerResponse({
+          balances: [
+            { userId: "user_1", balance: "12.50" },
+            { userId: "user_2", balance: "-7.50" },
+            { userId: "user_3", balance: "-5.00" }
+          ],
+          settleUpSuggestions: [{ fromUserId: "user_2", toUserId: "user_1", amount: "7.50" }]
+        })
+      },
+      { path: "/groups/group_1/expenses", body: { expenses: [] } },
+      {
+        method: "POST",
+        path: "/groups/group_1/settlements",
+        status: 201,
+        body: {
+          settlement: {
+            id: "settlement_1",
+            groupId: "group_1",
+            fromUserId: "user_2",
+            toUserId: "user_1",
+            amount: "7.50",
+            paidAt: "2026-04-12T08:45:00.000Z",
+            createdByUserId: "user_1",
+            createdAt: "2026-04-12T08:45:00.000Z",
+            updatedAt: "2026-04-12T08:45:00.000Z"
+          }
+        }
+      },
+      {
+        path: "/groups/group_1/ledger",
+        status: 503,
+        body: { error: "Unable to refresh the group ledger." }
+      }
+    ]);
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    const suggestions = await screen.findByRole("list", { name: "Settle-up suggestions" });
+    await user.click(within(suggestions).getByRole("button", { name: "Mark paid" }));
+
+    expect(await screen.findByText("Unable to refresh the group ledger.")).toBeInTheDocument();
+    expect(screen.getByText("Morgan is owed 12.50")).toBeInTheDocument();
+  });
+
   test("records a settle-up suggestion and refreshes the ledger history", async () => {
     const { requests } = installFetchMock([
       {
