@@ -106,6 +106,8 @@ function serializeExpense(expense: GroupExpense) {
 function serializeLedgerSettlement(settlement: LedgerSettlement) {
   return {
     ...settlement,
+    fromUserId: settlement.toUserId,
+    toUserId: settlement.fromUserId,
     paidAt: settlement.paidAt.toISOString(),
     createdAt: settlement.createdAt.toISOString(),
     updatedAt: settlement.updatedAt.toISOString()
@@ -801,8 +803,8 @@ export function createApp({
 
         const settlement = await store.createSettlement({
           groupId: request.params.groupId,
-          fromUserId: parsed.data.fromUserId,
-          toUserId: parsed.data.toUserId,
+          fromUserId: parsed.data.toUserId,
+          toUserId: parsed.data.fromUserId,
           amount,
           paidAt: new Date(),
           createdByUserId: user.id

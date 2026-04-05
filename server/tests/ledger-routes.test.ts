@@ -69,8 +69,8 @@ describe("ledger routes", () => {
 
     await store.createSettlement({
       groupId,
-      fromUserId: member.userId,
-      toUserId: owner.userId,
+      fromUserId: owner.userId,
+      toUserId: member.userId,
       amount: "5.00",
       paidAt: new Date("2026-04-09T09:30:00.000Z"),
       createdByUserId: member.userId
@@ -82,11 +82,11 @@ describe("ledger routes", () => {
 
     expect(ledgerResponse.status).toBe(200);
     expect(ledgerResponse.body.balances).toEqual([
-      { userId: owner.userId, balance: "20.00" },
-      { userId: member.userId, balance: "-20.00" }
+      { userId: owner.userId, balance: "10.00" },
+      { userId: member.userId, balance: "-10.00" }
     ]);
     expect(ledgerResponse.body.settleUpSuggestions).toEqual([
-      { fromUserId: member.userId, toUserId: owner.userId, amount: "20.00" }
+      { fromUserId: member.userId, toUserId: owner.userId, amount: "10.00" }
     ]);
     expect(ledgerResponse.body.settlements).toEqual([
       expect.objectContaining({
@@ -223,11 +223,11 @@ describe("ledger routes", () => {
 
     expect(ledgerResponse.status).toBe(200);
     expect(ledgerResponse.body.balances).toEqual([
-      { userId: owner.userId, balance: "25.00" },
-      { userId: member.userId, balance: "-25.00" }
+      { userId: owner.userId, balance: "5.00" },
+      { userId: member.userId, balance: "-5.00" }
     ]);
     expect(ledgerResponse.body.settleUpSuggestions).toEqual([
-      { fromUserId: member.userId, toUserId: owner.userId, amount: "25.00" }
+      { fromUserId: member.userId, toUserId: owner.userId, amount: "5.00" }
     ]);
   });
 
