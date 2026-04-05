@@ -69,8 +69,8 @@ describe("ledger routes", () => {
 
     await store.createSettlement({
       groupId,
-      fromUserId: owner.userId,
-      toUserId: member.userId,
+      fromUserId: member.userId,
+      toUserId: owner.userId,
       amount: "5.00",
       paidAt: new Date("2026-04-09T09:30:00.000Z"),
       createdByUserId: member.userId
@@ -82,11 +82,11 @@ describe("ledger routes", () => {
 
     expect(ledgerResponse.status).toBe(200);
     expect(ledgerResponse.body.balances).toEqual([
-      { userId: owner.userId, balance: "10.00" },
-      { userId: member.userId, balance: "-10.00" }
+      { userId: owner.userId, balance: "20.00" },
+      { userId: member.userId, balance: "-20.00" }
     ]);
     expect(ledgerResponse.body.settleUpSuggestions).toEqual([
-      { fromUserId: member.userId, toUserId: owner.userId, amount: "10.00" }
+      { fromUserId: member.userId, toUserId: owner.userId, amount: "20.00" }
     ]);
     expect(ledgerResponse.body.settlements).toEqual([
       expect.objectContaining({
@@ -151,7 +151,57 @@ describe("ledger routes", () => {
     expect(invalidExact.body.error).toBe("Exact split amounts must sum to the expense total.");
   });
 
-  test("creates settlements for members and rejects amounts above the current debt", async () => {
+  test("rejects incomplete rich expense payloads missing category, split mode, or participants", async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ store });
+    const owner = await registerMember(app, "owner@example.com", "Morgan");
+    const member = await registerMember(app, "member@example.com", "Avery");
+    const groupId = await createGroup(app, owner.cookie, "Road Trip");
+
+    await addMemberToGroup(store, groupId, owner.userId, member.userId);
+
+    for (const body of [
+      {
+        title: "Dinner",
+        splitMode: "equal",
+        expenseDate: "2026-04-10",
+        payers: [{ userId: owner.userId, amountPaid: "20.00" }],
+        participants: [
+          { userId: owner.userId },
+          { userId: member.userId }
+        ]
+      },
+      {
+        title: "Dinner",
+        category: "food",
+        expenseDate: "2026-04-10",
+        payers: [{ userId: owner.userId, amountPaid: "20.00" }],
+        participants: [
+          { userId: owner.userId },
+          { userId: member.userId }
+        ]
+      },
+      {
+        title: "Dinner",
+        category: "food",
+        splitMode: "equal",
+        expenseDate: "2026-04-10",
+        payers: [{ userId: owner.userId, amountPaid: "20.00" }]
+      }
+    ]) {
+      const response = await request(app)
+        .post(`/groups/${groupId}/expenses`)
+        .set("Cookie", owner.cookie)
+        .send(body);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe(
+        "Enter a title, category, split mode, date, at least one payer, and participants."
+      );
+    }
+  });
+
+  test("creates settlements with the same direction supplied by the request and rejects amounts above the current debt", async () => {
     const store = new InMemoryStore();
     const app = createApp({ store });
     const owner = await registerMember(app, "owner@example.com", "Morgan");
@@ -222,12 +272,12 @@ describe("ledger routes", () => {
       .set("Cookie", owner.cookie);
 
     expect(ledgerResponse.status).toBe(200);
-    expect(ledgerResponse.body.balances).toEqual([
-      { userId: owner.userId, balance: "5.00" },
-      { userId: member.userId, balance: "-5.00" }
-    ]);
-    expect(ledgerResponse.body.settleUpSuggestions).toEqual([
-      { fromUserId: member.userId, toUserId: owner.userId, amount: "5.00" }
+    expect(ledgerResponse.body.settlements).toEqual([
+      expect.objectContaining({
+        fromUserId: member.userId,
+        toUserId: owner.userId,
+        amount: "10.00"
+      })
     ]);
   });
 

@@ -54,11 +54,17 @@ const expenseParticipantSchema = z.object({
 
 const expenseSchema = z.object({
   title: z.string().trim().min(1),
-  category: z.enum(["food", "transport", "housing", "entertainment", "other"]).optional(),
-  splitMode: z.enum(["equal", "percentage", "exact"]).optional(),
+  category: z.enum(["food", "transport", "housing", "entertainment", "other"]),
+  splitMode: z.enum(["equal", "percentage", "exact"]),
   expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   payers: z.array(expensePayerSchema).min(1),
-  participants: z.array(expenseParticipantSchema).optional()
+  participants: z.array(expenseParticipantSchema).min(1)
+});
+
+const legacyExpenseSchema = z.object({
+  title: z.string().trim().min(1),
+  expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  payers: z.array(expensePayerSchema).min(1)
 });
 
 const settlementSchema = z.object({
@@ -106,8 +112,6 @@ function serializeExpense(expense: GroupExpense) {
 function serializeLedgerSettlement(settlement: LedgerSettlement) {
   return {
     ...settlement,
-    fromUserId: settlement.toUserId,
-    toUserId: settlement.fromUserId,
     paidAt: settlement.paidAt.toISOString(),
     createdAt: settlement.createdAt.toISOString(),
     updatedAt: settlement.updatedAt.toISOString()
@@ -170,6 +174,20 @@ function signedMoneyToCents(value: string) {
   const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
 
   return isNegative ? -cents : cents;
+}
+
+function hasAnyRichExpenseField(body: unknown) {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+
+  const candidate = body as Record<string, unknown>;
+
+  return (
+    "category" in candidate ||
+    "splitMode" in candidate ||
+    "participants" in candidate
+  );
 }
 
 export function createApp({
@@ -277,7 +295,7 @@ export function createApp({
     groupId: string;
     viewerUserId: string;
     splitMode: ExpenseSplitMode;
-    participants?: Array<{
+    participants: Array<{
       userId: string;
       included?: boolean;
       percentage?: string | number;
@@ -288,15 +306,6 @@ export function createApp({
 
     if (!group) {
       throw new ExpenseValidationError("Group not found.");
-    }
-
-    if (!input.participants) {
-      const defaultParticipants: ExpenseParticipantInput[] = group.members.map((member) => ({
-        userId: member.id,
-        included: true
-      }));
-
-      return defaultParticipants;
     }
 
     const activeMemberIds = new Set(group.members.map((member) => member.id));
@@ -352,30 +361,29 @@ export function createApp({
     viewerUserId: string;
     title: string;
     expenseDate: string;
-    category?: "food" | "transport" | "housing" | "entertainment" | "other";
-    splitMode?: ExpenseSplitMode;
+    category: "food" | "transport" | "housing" | "entertainment" | "other";
+    splitMode: ExpenseSplitMode;
     payers: ExpensePayerInput[];
-    participants?: Array<{
+    participants: Array<{
       userId: string;
       included?: boolean;
       percentage?: string | number;
       amountOwed?: string;
     }>;
   }) {
-    const splitMode = input.splitMode ?? "equal";
     const expenseDate = parseExpenseDate(input.expenseDate);
     const normalizedPayers = await validateExpensePayers(input.groupId, input.payers);
     const normalizedParticipants = await validateExpenseParticipants({
       groupId: input.groupId,
       viewerUserId: input.viewerUserId,
-      splitMode,
+      splitMode: input.splitMode,
       participants: input.participants
     });
     const totalAmount = sumMoney(normalizedPayers.map((payer) => payer.amountPaid));
 
     try {
       normalizeExpenseShares({
-        splitMode,
+        splitMode: input.splitMode,
         total: totalAmount,
         participants: normalizedParticipants
       });
@@ -385,8 +393,8 @@ export function createApp({
 
     return {
       title: input.title.trim(),
-      category: input.category ?? "other",
-      splitMode,
+      category: input.category,
+      splitMode: input.splitMode,
       expenseDate,
       payers: normalizedPayers,
       participants: normalizedParticipants
@@ -665,24 +673,48 @@ export function createApp({
         return response.status(403).json({ error: "Only group members can add expenses." });
       }
 
+      const expectsRichExpense = hasAnyRichExpenseField(request.body);
       const parsed = expenseSchema.safeParse(request.body);
+      const parsedLegacy = expectsRichExpense
+        ? null
+        : legacyExpenseSchema.safeParse(request.body);
 
-      if (!parsed.success) {
-        return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
+      if (!parsed.success && !parsedLegacy?.success) {
+        return response.status(400).json({
+          error: expectsRichExpense
+            ? "Enter a title, category, split mode, date, at least one payer, and participants."
+            : "Enter a title, a date, and at least one payer."
+        });
       }
 
       try {
-        const expenseInput = await buildRichExpenseInput({
-          groupId: request.params.groupId,
-          viewerUserId: user.id,
-          ...parsed.data
-        });
+        let expense: GroupExpense;
 
-        const expense = await store.createExpense({
-          groupId: request.params.groupId,
-          createdByUserId: user.id,
-          ...expenseInput
-        });
+        if (parsed.success) {
+          expense = await store.createExpense({
+            groupId: request.params.groupId,
+            createdByUserId: user.id,
+            ...(await buildRichExpenseInput({
+              groupId: request.params.groupId,
+              viewerUserId: user.id,
+              ...parsed.data
+            }))
+          });
+        } else {
+          if (!parsedLegacy?.success) {
+            throw new Error("Legacy expense parsing unexpectedly failed.");
+          }
+
+          const legacyData = parsedLegacy.data;
+
+          expense = await store.createExpense({
+            groupId: request.params.groupId,
+            createdByUserId: user.id,
+            title: legacyData.title.trim(),
+            expenseDate: parseExpenseDate(legacyData.expenseDate),
+            payers: await validateExpensePayers(request.params.groupId, legacyData.payers)
+          });
+        }
 
         return response.status(201).json({ expense: serializeExpense(expense) });
       } catch (error) {
@@ -711,25 +743,46 @@ export function createApp({
         return response.status(403).json({ error: "Only the creator can edit this expense." });
       }
 
+      const expectsRichExpense = hasAnyRichExpenseField(request.body);
       const parsed = expenseSchema.safeParse(request.body);
+      const parsedLegacy = expectsRichExpense
+        ? null
+        : legacyExpenseSchema.safeParse(request.body);
 
-      if (!parsed.success) {
-        return response.status(400).json({ error: "Enter a title, a date, and at least one payer." });
+      if (!parsed.success && !parsedLegacy?.success) {
+        return response.status(400).json({
+          error: expectsRichExpense
+            ? "Enter a title, category, split mode, date, at least one payer, and participants."
+            : "Enter a title, a date, and at least one payer."
+        });
       }
 
       try {
-        const expenseInput = await buildRichExpenseInput({
-          groupId: expense.groupId,
-          viewerUserId: user.id,
-          ...parsed.data,
-          category: parsed.data.category ?? expense.category ?? "other",
-          splitMode: parsed.data.splitMode ?? expense.splitMode ?? "equal"
-        });
+        let updatedExpense: GroupExpense | null;
 
-        const updatedExpense = await store.updateExpense({
-          expenseId: expense.id,
-          ...expenseInput
-        });
+        if (parsed.success) {
+          updatedExpense = await store.updateExpense({
+            expenseId: expense.id,
+            ...(await buildRichExpenseInput({
+              groupId: expense.groupId,
+              viewerUserId: user.id,
+              ...parsed.data
+            }))
+          });
+        } else {
+          if (!parsedLegacy?.success) {
+            throw new Error("Legacy expense parsing unexpectedly failed.");
+          }
+
+          const legacyData = parsedLegacy.data;
+
+          updatedExpense = await store.updateExpense({
+            expenseId: expense.id,
+            title: legacyData.title.trim(),
+            expenseDate: parseExpenseDate(legacyData.expenseDate),
+            payers: await validateExpensePayers(expense.groupId, legacyData.payers)
+          });
+        }
 
         if (!updatedExpense) {
           return response.status(404).json({ error: "Expense not found." });
@@ -803,8 +856,8 @@ export function createApp({
 
         const settlement = await store.createSettlement({
           groupId: request.params.groupId,
-          fromUserId: parsed.data.toUserId,
-          toUserId: parsed.data.fromUserId,
+          fromUserId: parsed.data.fromUserId,
+          toUserId: parsed.data.toUserId,
           amount,
           paidAt: new Date(),
           createdByUserId: user.id
