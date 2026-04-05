@@ -172,21 +172,6 @@ export type ExpensePayerInput = {
   amountPaid: string;
 };
 
-type LegacyExpenseInput = {
-  groupId: string;
-  createdByUserId: string;
-  title: string;
-  expenseDate: Date;
-  payers: ExpensePayerInput[];
-};
-
-type LegacyUpdateExpenseInput = {
-  expenseId: string;
-  title: string;
-  expenseDate: Date;
-  payers: ExpensePayerInput[];
-};
-
 export type CreateExpenseInput = {
   groupId: string;
   createdByUserId: string;
@@ -256,10 +241,10 @@ export interface Store {
   declineInvitation(invitationId: string, userId: string): Promise<unknown>;
   getDashboardData(userId: string): Promise<DashboardData>;
   getLedger(groupId: string, viewerUserId: string): Promise<GroupLedger | null>;
-  createExpense(input: CreateExpenseInput | LegacyExpenseInput): Promise<GroupExpense>;
+  createExpense(input: CreateExpenseInput): Promise<GroupExpense>;
   listExpensesForGroup(groupId: string): Promise<GroupExpense[]>;
   findExpenseById(expenseId: string): Promise<GroupExpense | null>;
-  updateExpense(input: UpdateExpenseInput | LegacyUpdateExpenseInput): Promise<GroupExpense | null>;
+  updateExpense(input: UpdateExpenseInput): Promise<GroupExpense | null>;
   createSettlement(input: CreateSettlementInput): Promise<LedgerSettlement>;
   removeGroupMember(groupId: string, memberId: string): Promise<GroupDetail | null>;
   deleteExpense(expenseId: string): Promise<boolean>;

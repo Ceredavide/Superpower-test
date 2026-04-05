@@ -61,12 +61,6 @@ const expenseSchema = z.object({
   participants: z.array(expenseParticipantSchema).min(1)
 });
 
-const legacyExpenseSchema = z.object({
-  title: z.string().trim().min(1),
-  expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  payers: z.array(expensePayerSchema).min(1)
-});
-
 const settlementSchema = z.object({
   fromUserId: z.string().min(1),
   toUserId: z.string().min(1),
@@ -174,20 +168,6 @@ function signedMoneyToCents(value: string) {
   const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
 
   return isNegative ? -cents : cents;
-}
-
-function hasAnyRichExpenseField(body: unknown) {
-  if (!body || typeof body !== "object") {
-    return false;
-  }
-
-  const candidate = body as Record<string, unknown>;
-
-  return (
-    "category" in candidate ||
-    "splitMode" in candidate ||
-    "participants" in candidate
-  );
 }
 
 export function createApp({
@@ -673,48 +653,24 @@ export function createApp({
         return response.status(403).json({ error: "Only group members can add expenses." });
       }
 
-      const expectsRichExpense = hasAnyRichExpenseField(request.body);
       const parsed = expenseSchema.safeParse(request.body);
-      const parsedLegacy = expectsRichExpense
-        ? null
-        : legacyExpenseSchema.safeParse(request.body);
 
-      if (!parsed.success && !parsedLegacy?.success) {
+      if (!parsed.success) {
         return response.status(400).json({
-          error: expectsRichExpense
-            ? "Enter a title, category, split mode, date, at least one payer, and participants."
-            : "Enter a title, a date, and at least one payer."
+          error: "Enter a title, category, split mode, date, at least one payer, and participants."
         });
       }
 
       try {
-        let expense: GroupExpense;
-
-        if (parsed.success) {
-          expense = await store.createExpense({
+        const expense = await store.createExpense({
+          groupId: request.params.groupId,
+          createdByUserId: user.id,
+          ...(await buildRichExpenseInput({
             groupId: request.params.groupId,
-            createdByUserId: user.id,
-            ...(await buildRichExpenseInput({
-              groupId: request.params.groupId,
-              viewerUserId: user.id,
-              ...parsed.data
-            }))
-          });
-        } else {
-          if (!parsedLegacy?.success) {
-            throw new Error("Legacy expense parsing unexpectedly failed.");
-          }
-
-          const legacyData = parsedLegacy.data;
-
-          expense = await store.createExpense({
-            groupId: request.params.groupId,
-            createdByUserId: user.id,
-            title: legacyData.title.trim(),
-            expenseDate: parseExpenseDate(legacyData.expenseDate),
-            payers: await validateExpensePayers(request.params.groupId, legacyData.payers)
-          });
-        }
+            viewerUserId: user.id,
+            ...parsed.data
+          }))
+        });
 
         return response.status(201).json({ expense: serializeExpense(expense) });
       } catch (error) {
@@ -743,46 +699,23 @@ export function createApp({
         return response.status(403).json({ error: "Only the creator can edit this expense." });
       }
 
-      const expectsRichExpense = hasAnyRichExpenseField(request.body);
       const parsed = expenseSchema.safeParse(request.body);
-      const parsedLegacy = expectsRichExpense
-        ? null
-        : legacyExpenseSchema.safeParse(request.body);
 
-      if (!parsed.success && !parsedLegacy?.success) {
+      if (!parsed.success) {
         return response.status(400).json({
-          error: expectsRichExpense
-            ? "Enter a title, category, split mode, date, at least one payer, and participants."
-            : "Enter a title, a date, and at least one payer."
+          error: "Enter a title, category, split mode, date, at least one payer, and participants."
         });
       }
 
       try {
-        let updatedExpense: GroupExpense | null;
-
-        if (parsed.success) {
-          updatedExpense = await store.updateExpense({
-            expenseId: expense.id,
-            ...(await buildRichExpenseInput({
-              groupId: expense.groupId,
-              viewerUserId: user.id,
-              ...parsed.data
-            }))
-          });
-        } else {
-          if (!parsedLegacy?.success) {
-            throw new Error("Legacy expense parsing unexpectedly failed.");
-          }
-
-          const legacyData = parsedLegacy.data;
-
-          updatedExpense = await store.updateExpense({
-            expenseId: expense.id,
-            title: legacyData.title.trim(),
-            expenseDate: parseExpenseDate(legacyData.expenseDate),
-            payers: await validateExpensePayers(expense.groupId, legacyData.payers)
-          });
-        }
+        const updatedExpense = await store.updateExpense({
+          expenseId: expense.id,
+          ...(await buildRichExpenseInput({
+            groupId: expense.groupId,
+            viewerUserId: user.id,
+            ...parsed.data
+          }))
+        });
 
         if (!updatedExpense) {
           return response.status(404).json({ error: "Expense not found." });

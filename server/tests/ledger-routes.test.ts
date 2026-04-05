@@ -42,6 +42,21 @@ async function addMemberToGroup(
   await store.acceptInvitation(invitation.id, memberUserId);
 }
 
+function buildEqualExpensePayload(ownerUserId: string, memberUserId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    title: "Dinner",
+    category: "food",
+    splitMode: "equal",
+    expenseDate: "2026-04-10",
+    payers: [{ userId: ownerUserId, amountPaid: "20.00" }],
+    participants: [
+      { userId: ownerUserId },
+      { userId: memberUserId }
+    ],
+    ...overrides
+  };
+}
+
 describe("ledger routes", () => {
   test("returns balances, settle-up suggestions, and settlement history for group members only", async () => {
     const store = new InMemoryStore();
@@ -151,7 +166,7 @@ describe("ledger routes", () => {
     expect(invalidExact.body.error).toBe("Exact split amounts must sum to the expense total.");
   });
 
-  test("rejects incomplete rich expense payloads missing category, split mode, or participants", async () => {
+  test("rejects expense payloads that do not include the full rich ledger contract", async () => {
     const store = new InMemoryStore();
     const app = createApp({ store });
     const owner = await registerMember(app, "owner@example.com", "Morgan");
@@ -161,6 +176,11 @@ describe("ledger routes", () => {
     await addMemberToGroup(store, groupId, owner.userId, member.userId);
 
     for (const body of [
+      {
+        title: "Dinner",
+        expenseDate: "2026-04-10",
+        payers: [{ userId: owner.userId, amountPaid: "20.00" }]
+      },
       {
         title: "Dinner",
         splitMode: "equal",
@@ -199,6 +219,60 @@ describe("ledger routes", () => {
         "Enter a title, category, split mode, date, at least one payer, and participants."
       );
     }
+  });
+
+  test("re-derives normalized shares when a rich expense is updated", async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ store });
+    const owner = await registerMember(app, "owner@example.com", "Morgan");
+    const member = await registerMember(app, "member@example.com", "Avery");
+    const groupId = await createGroup(app, owner.cookie, "Share Update");
+
+    await addMemberToGroup(store, groupId, owner.userId, member.userId);
+
+    const createResponse = await request(app)
+      .post(`/groups/${groupId}/expenses`)
+      .set("Cookie", owner.cookie)
+      .send(buildEqualExpensePayload(owner.userId, member.userId, {
+        title: "Train tickets",
+        payers: [{ userId: owner.userId, amountPaid: "30.00" }]
+      }));
+
+    expect(createResponse.status).toBe(201);
+
+    const updateResponse = await request(app)
+      .patch(`/expenses/${createResponse.body.expense.id as string}`)
+      .set("Cookie", owner.cookie)
+      .send({
+        title: "Train tickets updated",
+        category: "transport",
+        splitMode: "exact",
+        expenseDate: "2026-04-10",
+        payers: [{ userId: owner.userId, amountPaid: "30.00" }],
+        participants: [
+          { userId: owner.userId, amountOwed: "12.00" },
+          { userId: member.userId, amountOwed: "18.00" }
+        ]
+      });
+
+    expect(updateResponse.status).toBe(200);
+
+    const ledgerResponse = await request(app)
+      .get(`/groups/${groupId}/ledger`)
+      .set("Cookie", owner.cookie);
+
+    expect(ledgerResponse.status).toBe(200);
+    expect(ledgerResponse.body.expenses).toEqual([
+      expect.objectContaining({
+        title: "Train tickets updated",
+        category: "transport",
+        splitMode: "exact",
+        shares: [
+          { userId: owner.userId, amount: "12.00" },
+          { userId: member.userId, amount: "18.00" }
+        ]
+      })
+    ]);
   });
 
   test("creates settlements with the same direction supplied by the request and rejects amounts above the current debt", async () => {
