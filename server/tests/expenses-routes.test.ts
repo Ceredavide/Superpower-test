@@ -328,4 +328,48 @@ describe("expense routes", () => {
     const ownerDelete = await request(app).delete(`/expenses/${expenseId}`).set("Cookie", owner.cookie);
     expect(ownerDelete.status).toBe(204);
   });
+
+  test("prevents a removed former creator from deleting a historical expense", async () => {
+    const app = createApp({ store: new InMemoryStore() });
+    const owner = await registerMember(app, "owner@example.com", "Morgan");
+    const member = await registerMember(app, "member@example.com", "Avery");
+    const groupId = await createGroup(app, owner.cookie, "Cabin");
+
+    await request(app)
+      .post(`/groups/${groupId}/invitations`)
+      .set("Cookie", owner.cookie)
+      .send({ identifier: "Avery" });
+
+    const invitations = await request(app).get("/invitations").set("Cookie", member.cookie);
+
+    await request(app)
+      .post(`/invitations/${invitations.body.invitations[0].id}/accept`)
+      .set("Cookie", member.cookie);
+
+    const createExpense = await request(app)
+      .post(`/groups/${groupId}/expenses`)
+      .set("Cookie", member.cookie)
+      .send(
+        buildExpensePayload(owner.userId, member.userId, {
+          title: "Member expense",
+          payers: [{ userId: member.userId, amountPaid: "18.00" }]
+        })
+      );
+
+    expect(createExpense.status).toBe(201);
+
+    const removeMember = await request(app)
+      .post(`/groups/${groupId}/members/${member.userId}/remove`)
+      .set("Cookie", owner.cookie)
+      .send();
+
+    expect(removeMember.status).toBe(200);
+
+    const deleteResponse = await request(app)
+      .delete(`/expenses/${createExpense.body.expense.id as string}`)
+      .set("Cookie", member.cookie);
+
+    expect(deleteResponse.status).toBe(403);
+    expect(deleteResponse.body.error).toBe("Only active group members can delete this expense.");
+  });
 });

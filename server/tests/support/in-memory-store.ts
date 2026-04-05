@@ -178,6 +178,33 @@ function pruneZeroMoneyEntriesFromLedgerExpense(expense: LedgerExpense): LedgerE
   };
 }
 
+function redistributeLedgerExpenseForActiveRoster(
+  expense: LedgerExpense,
+  departedMemberships: StoredMembership[],
+  activeMemberIds: string[]
+) {
+  return departedMemberships.reduce<LedgerExpense>((currentExpense, departedMembership) => {
+    if (!effectContainsUser(currentExpense, departedMembership.userId)) {
+      return currentExpense;
+    }
+
+    const redistributed = redistributeDepartedMemberExpense(
+      {
+        payers: currentExpense.payers,
+        shares: currentExpense.shares
+      },
+      departedMembership.userId,
+      activeMemberIds
+    );
+
+    return {
+      ...currentExpense,
+      payers: redistributed.payers,
+      shares: redistributed.shares
+    };
+  }, expense);
+}
+
 export class InMemoryStore implements Store {
   private users: StoredUser[] = [];
   private sessions: StoredSession[] = [];
@@ -517,17 +544,7 @@ export class InMemoryStore implements Store {
       .map((expense) => this.materializeLedgerExpense(expense))
       .map((expense) =>
         pruneZeroMoneyEntriesFromLedgerExpense(
-          departedMemberships.reduce(
-            (currentExpense, departedMembership) =>
-              effectContainsUser(currentExpense, departedMembership.userId)
-                ? redistributeDepartedMemberExpense(
-                    currentExpense,
-                    departedMembership.userId,
-                    activeMemberIds
-                  )
-                : currentExpense,
-            expense
-          )
+          redistributeLedgerExpenseForActiveRoster(expense, departedMemberships, activeMemberIds)
         )
       );
 

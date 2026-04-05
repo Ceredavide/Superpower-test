@@ -862,6 +862,12 @@ export function createApp({
         return response.status(404).json({ error: "Expense not found." });
       }
 
+      const isActiveMember = await store.isGroupMember(expense.groupId, user.id);
+
+      if (!isActiveMember) {
+        return response.status(403).json({ error: "Only active group members can delete this expense." });
+      }
+
       if (expense.createdBy.id !== user.id) {
         return response.status(403).json({ error: "Only the creator can delete this expense." });
       }

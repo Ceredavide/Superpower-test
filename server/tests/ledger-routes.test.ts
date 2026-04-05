@@ -400,6 +400,49 @@ describe("ledger routes", () => {
     expect(ledgerResponse.body.settleUpSuggestions).toEqual([]);
   });
 
+  test("still returns ledger data after removing a member from a group with expenses", async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ store });
+    const owner = await registerMember(app, "owner@example.com", "Morgan");
+    const member = await registerMember(app, "member@example.com", "Avery");
+    const groupId = await createGroup(app, owner.cookie, "Weekend House");
+
+    await addMemberToGroup(store, groupId, owner.userId, member.userId);
+
+    const createExpense = await request(app)
+      .post(`/groups/${groupId}/expenses`)
+      .set("Cookie", owner.cookie)
+      .send(
+        buildEqualExpensePayload(owner.userId, member.userId, {
+          title: "House dinner",
+          payers: [{ userId: owner.userId, amountPaid: "24.00" }]
+        })
+      );
+
+    expect(createExpense.status).toBe(201);
+
+    const removalResponse = await request(app)
+      .post(`/groups/${groupId}/members/${member.userId}/remove`)
+      .set("Cookie", owner.cookie)
+      .send();
+
+    expect(removalResponse.status).toBe(200);
+
+    const ledgerResponse = await request(app)
+      .get(`/groups/${groupId}/ledger`)
+      .set("Cookie", owner.cookie);
+
+    expect(ledgerResponse.status).toBe(200);
+    expect(ledgerResponse.body.expenses).toEqual([
+      expect.objectContaining({
+        title: "House dinner",
+        expenseDate: "2026-04-10",
+        category: "food",
+        splitMode: "equal"
+      })
+    ]);
+  });
+
   test("rejects removing the last active member", async () => {
     const store = new InMemoryStore();
     const app = createApp({ store });
