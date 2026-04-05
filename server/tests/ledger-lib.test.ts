@@ -5,7 +5,7 @@ import {
   normalizeExpenseShares,
   redistributeDepartedMemberExpense,
   suggestSettlements
-} from "../src/lib/ledger";
+} from "../src/core/lib/ledger";
 import type { CreateExpenseInput, UpdateExpenseInput } from "../src/store/types";
 
 describe("ledger math helpers", () => {

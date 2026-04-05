@@ -6,8 +6,8 @@ import {
   normalizeExpenseShares,
   redistributeDepartedMemberExpense,
   suggestSettlements
-} from "../lib/ledger";
-import { normalizeMoneyInput, sumMoney } from "../lib/money";
+} from "../core/lib/ledger";
+import { normalizeMoneyInput, sumMoney } from "../core/lib/money";
 import type {
   CreateSettlementInput,
   CreateExpenseInput,

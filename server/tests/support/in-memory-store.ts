@@ -24,8 +24,8 @@ import {
   normalizeExpenseShares,
   redistributeDepartedMemberExpense,
   suggestSettlements
-} from "../../src/lib/ledger";
-import { sumMoney } from "../../src/lib/money";
+} from "../../src/core/lib/ledger";
+import { sumMoney } from "../../src/core/lib/money";
 
 type StoredGroup = {
   id: string;
