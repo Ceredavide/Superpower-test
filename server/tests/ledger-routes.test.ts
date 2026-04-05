@@ -317,6 +317,11 @@ describe("ledger routes", () => {
         title: "Train tickets updated",
         category: "transport",
         splitMode: "exact",
+        createdBy: {
+          id: owner.userId,
+          email: "owner@example.com",
+          displayName: "Morgan"
+        },
         shares: [
           { userId: owner.userId, amount: "12.00" },
           { userId: member.userId, amount: "18.00" }

@@ -124,6 +124,11 @@ export type LedgerExpense = {
   expenseDate: Date;
   createdAt: Date;
   updatedAt: Date;
+  createdBy: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
   payers: LedgerAmount[];
   shares: LedgerExpenseShare[];
 };

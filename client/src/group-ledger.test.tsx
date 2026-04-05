@@ -339,6 +339,11 @@ describe("group ledger", () => {
               expenseDate: "2026-04-10",
               createdAt: "2026-04-10T08:00:00.000Z",
               updatedAt: "2026-04-10T08:00:00.000Z",
+              createdBy: {
+                id: "user_1",
+                email: "owner@example.com",
+                displayName: "Morgan"
+              },
               payers: [{ userId: "user_2", amount: "24.00" }],
               shares: [
                 { userId: "user_1", amount: "12.00" },
@@ -365,6 +370,9 @@ describe("group ledger", () => {
     expect(await screen.findByText("House dinner")).toBeInTheDocument();
     expect(screen.getByText("Avery paid 24.00")).toBeInTheDocument();
     expect(screen.getByText("Morgan is owed 12.00")).toBeInTheDocument();
+    expect(screen.getByText("Created by Morgan")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit expense" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete expense" })).toBeInTheDocument();
     expect(screen.queryByText("Legacy expenses are unavailable.")).toBeNull();
   });
 

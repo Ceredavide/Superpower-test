@@ -126,6 +126,11 @@ function toLedgerExpense(expense: ExpenseWithRelations): LedgerExpense {
     expenseDate: expense.expenseDate,
     createdAt: expense.createdAt,
     updatedAt: expense.updatedAt,
+    createdBy: {
+      id: expense.createdBy.id,
+      email: expense.createdBy.email,
+      displayName: expense.createdBy.displayName
+    },
     payers: expense.payers.map((payer) => ({
       userId: payer.user.id,
       amount: payer.amountPaid.toFixed(2)

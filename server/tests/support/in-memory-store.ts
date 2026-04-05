@@ -656,6 +656,7 @@ export class InMemoryStore implements Store {
   }
 
   private materializeLedgerExpense(expense: StoredExpense): LedgerExpense {
+    const createdBy = this.users.find((user) => user.id === expense.createdByUserId)!;
     const payers = this.expensePayers
       .filter((entry) => entry.expenseId === expense.id)
       .map((entry) => ({
@@ -678,6 +679,11 @@ export class InMemoryStore implements Store {
       expenseDate: expense.expenseDate,
       createdAt: expense.createdAt,
       updatedAt: expense.updatedAt,
+      createdBy: {
+        id: createdBy.id,
+        email: createdBy.email,
+        displayName: createdBy.displayName
+      },
       payers,
       shares
     };

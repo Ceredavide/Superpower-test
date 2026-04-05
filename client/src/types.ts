@@ -70,6 +70,11 @@ export type LedgerExpense = {
   expenseDate: string;
   createdAt: string;
   updatedAt: string;
+  createdBy?: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
   payers: Array<{
     userId: string;
     amount: string;

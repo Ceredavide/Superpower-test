@@ -195,6 +195,12 @@ function collectNameEntries(group: GroupDetail, ledger: GroupLedger | null, expe
     entries.push([member.id, member.displayName ?? member.email]);
   }
 
+  for (const expense of ledger?.expenses ?? []) {
+    if (expense.createdBy) {
+      entries.push([expense.createdBy.id, expense.createdBy.displayName ?? expense.createdBy.email]);
+    }
+  }
+
   for (const settlement of ledger?.settlements ?? []) {
     if (settlement.fromUser) {
       entries.push([
@@ -264,7 +270,11 @@ function mergeExpenses(
       totalAmount: hasLedgerExpense ? totalAmountFromLedger : legacyExpense?.totalAmount ?? "0.00",
       createdAt: (hasLedgerExpense ? ledgerExpense?.createdAt : legacyExpense?.createdAt) ?? "",
       updatedAt: (hasLedgerExpense ? ledgerExpense?.updatedAt : legacyExpense?.updatedAt) ?? "",
-      createdBy: legacyExpense?.createdBy ?? creatorCache[id] ?? null,
+      createdBy:
+        (hasLedgerExpense ? ledgerExpense?.createdBy : legacyExpense?.createdBy) ??
+        legacyExpense?.createdBy ??
+        creatorCache[id] ??
+        null,
       payers:
         hasLedgerExpense
           ? (ledgerExpense?.payers ?? []).map((payer) => ({
@@ -457,6 +467,33 @@ export function GroupLedgerSection({
       return changed ? next : current;
     });
   }, [expenses]);
+
+  useEffect(() => {
+    setCachedExpenseCreators((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const expense of ledger?.expenses ?? []) {
+        if (!expense.createdBy) {
+          continue;
+        }
+
+        const cachedCreator = next[expense.id];
+
+        if (
+          !cachedCreator ||
+          cachedCreator.id !== expense.createdBy.id ||
+          cachedCreator.email !== expense.createdBy.email ||
+          cachedCreator.displayName !== expense.createdBy.displayName
+        ) {
+          next[expense.id] = expense.createdBy;
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [ledger]);
 
   const liveTotal = calculateDraftTotal(draft.payers);
   const nameMap = buildNameMap(cachedNames, group, ledger, expenses);
