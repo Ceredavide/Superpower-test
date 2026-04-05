@@ -133,6 +133,51 @@ function toLedgerSettlement(entry: StoredSettlement): LedgerSettlement {
   };
 }
 
+function settlementToExpenseEffect(settlement: Pick<LedgerSettlement, "fromUserId" | "toUserId" | "amount">) {
+  return {
+    payers: [
+      {
+        userId: settlement.toUserId,
+        amount: settlement.amount
+      }
+    ],
+    shares: [
+      {
+        userId: settlement.fromUserId,
+        amount: settlement.amount
+      }
+    ]
+  };
+}
+
+function effectContainsUser(
+  effect: ReturnType<typeof settlementToExpenseEffect> | LedgerExpense,
+  userId: string
+) {
+  return (
+    effect.payers.some((payer) => payer.userId === userId) ||
+    effect.shares.some((share) => share.userId === userId)
+  );
+}
+
+function pruneZeroMoneyEntries(effect: {
+  payers: Array<{ userId: string; amount: string }>;
+  shares: Array<{ userId: string; amount: string }>;
+}) {
+  return {
+    payers: effect.payers.filter((entry) => entry.amount !== "0.00"),
+    shares: effect.shares.filter((entry) => entry.amount !== "0.00")
+  };
+}
+
+function pruneZeroMoneyEntriesFromLedgerExpense(expense: LedgerExpense): LedgerExpense {
+  return {
+    ...expense,
+    payers: expense.payers.filter((entry) => entry.amount !== "0.00"),
+    shares: expense.shares.filter((entry) => entry.amount !== "0.00")
+  };
+}
+
 export class InMemoryStore implements Store {
   private users: StoredUser[] = [];
   private sessions: StoredSession[] = [];
@@ -471,14 +516,18 @@ export class InMemoryStore implements Store {
       })
       .map((expense) => this.materializeLedgerExpense(expense))
       .map((expense) =>
-        departedMemberships.reduce(
-          (currentExpense, departedMembership) =>
-            redistributeDepartedMemberExpense(
-              currentExpense,
-              departedMembership.userId,
-              activeMemberIds
-            ),
-          expense
+        pruneZeroMoneyEntriesFromLedgerExpense(
+          departedMemberships.reduce(
+            (currentExpense, departedMembership) =>
+              effectContainsUser(currentExpense, departedMembership.userId)
+                ? redistributeDepartedMemberExpense(
+                    currentExpense,
+                    departedMembership.userId,
+                    activeMemberIds
+                  )
+                : currentExpense,
+            expense
+          )
         )
       );
 
@@ -489,10 +538,20 @@ export class InMemoryStore implements Store {
         return byPaidAt !== 0 ? byPaidAt : left.createdAt.getTime() - right.createdAt.getTime();
       })
       .map(toLedgerSettlement);
-    const activeSettlements = ledgerSettlements.filter(
-      (settlement) =>
-        activeMemberIds.includes(settlement.fromUserId) &&
-        activeMemberIds.includes(settlement.toUserId)
+    const settlementEffects = ledgerSettlements.map((settlement) =>
+      pruneZeroMoneyEntries(
+        departedMemberships.reduce<ReturnType<typeof settlementToExpenseEffect>>(
+          (currentEffect, departedMembership) =>
+            effectContainsUser(currentEffect, departedMembership.userId)
+              ? redistributeDepartedMemberExpense(
+                  currentEffect,
+                  departedMembership.userId,
+                  activeMemberIds
+                )
+              : currentEffect,
+          settlementToExpenseEffect(settlement)
+        )
+      )
     );
 
     const balances =
@@ -503,15 +562,14 @@ export class InMemoryStore implements Store {
           }))
         : deriveBalances({
             memberIds: activeMemberIds,
-            expenses: ledgerExpenses.map((expense) => ({
-              payers: expense.payers,
-              shares: expense.shares
-            })),
-            settlements: activeSettlements.map((settlement) => ({
-              fromUserId: settlement.fromUserId,
-              toUserId: settlement.toUserId,
-              amount: settlement.amount
-            }))
+            expenses: [
+              ...ledgerExpenses.map((expense) => ({
+                payers: expense.payers,
+                shares: expense.shares
+              })),
+              ...settlementEffects
+            ],
+            settlements: []
           });
 
     return {
@@ -711,14 +769,34 @@ export class InMemoryStore implements Store {
       (entry) => entry.groupId === groupId && entry.userId === memberId
     );
 
-    if (!membership) {
+    const group = this.groups.find((entry) => entry.id === groupId);
+
+    if (!membership || !group || membership.status !== "active") {
+      return null;
+    }
+
+    const remainingActiveMemberships = this.memberships
+      .filter(
+        (entry) =>
+          entry.groupId === groupId && entry.status === "active" && entry.userId !== memberId
+      )
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+    const isOwnerRemoval = group.ownerId === memberId;
+    const replacementOwner = isOwnerRemoval ? remainingActiveMemberships[0] : null;
+
+    if (isOwnerRemoval && !replacementOwner) {
       return null;
     }
 
     membership.status = "inactive";
     membership.leftAt = new Date();
 
-    const group = this.groups.find((entry) => entry.id === groupId)!;
+    if (replacementOwner) {
+      group.ownerId = replacementOwner.userId;
+      replacementOwner.role = "owner";
+      return this.getGroupDetail(groupId, replacementOwner.userId);
+    }
+
     return this.getGroupDetail(groupId, group.ownerId);
   }
 

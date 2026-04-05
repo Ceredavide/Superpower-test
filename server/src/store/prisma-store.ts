@@ -133,7 +133,15 @@ function redistributeExpenseForActiveRoster(
   departedMemberships: MembershipWithUser[],
   activeMemberIds: string[]
 ): LedgerExpense {
+  const containsDepartedMember = (currentExpense: LedgerExpense, userId: string) =>
+    currentExpense.payers.some((payer) => payer.userId === userId) ||
+    currentExpense.shares.some((share) => share.userId === userId);
+
   return departedMemberships.reduce<LedgerExpense>((currentExpense, departedMembership) => {
+    if (!containsDepartedMember(currentExpense, departedMembership.userId)) {
+      return currentExpense;
+    }
+
     const redistributed = redistributeDepartedMemberExpense(
       {
         payers: currentExpense.payers,
@@ -149,6 +157,65 @@ function redistributeExpenseForActiveRoster(
       shares: redistributed.shares
     };
   }, expense);
+}
+
+function pruneZeroMoneyEntries(expense: {
+  payers: Array<{ userId: string; amount: string }>;
+  shares: Array<{ userId: string; amount: string }>;
+}) {
+  return {
+    payers: expense.payers.filter((entry) => entry.amount !== "0.00"),
+    shares: expense.shares.filter((entry) => entry.amount !== "0.00")
+  };
+}
+
+function pruneZeroMoneyEntriesFromLedgerExpense(expense: LedgerExpense): LedgerExpense {
+  return {
+    ...expense,
+    payers: expense.payers.filter((entry) => entry.amount !== "0.00"),
+    shares: expense.shares.filter((entry) => entry.amount !== "0.00")
+  };
+}
+
+function settlementToExpenseEffect(settlement: Pick<LedgerSettlement, "fromUserId" | "toUserId" | "amount">) {
+  return {
+    payers: [
+      {
+        userId: settlement.toUserId,
+        amount: settlement.amount
+      }
+    ],
+    shares: [
+      {
+        userId: settlement.fromUserId,
+        amount: settlement.amount
+      }
+    ]
+  };
+}
+
+function redistributeSettlementForActiveRoster(
+  settlement: LedgerSettlement,
+  departedMemberships: MembershipWithUser[],
+  activeMemberIds: string[]
+) {
+  const containsDepartedMember = (
+    currentEffect: ReturnType<typeof settlementToExpenseEffect>,
+    userId: string
+  ) =>
+    currentEffect.payers.some((payer) => payer.userId === userId) ||
+    currentEffect.shares.some((share) => share.userId === userId);
+
+  return departedMemberships.reduce<ReturnType<typeof settlementToExpenseEffect>>(
+    (currentEffect, departedMembership) => {
+      if (!containsDepartedMember(currentEffect, departedMembership.userId)) {
+        return currentEffect;
+      }
+
+      return redistributeDepartedMemberExpense(currentEffect, departedMembership.userId, activeMemberIds);
+    },
+    settlementToExpenseEffect(settlement)
+  );
 }
 
 function toLedgerMember(entry: {
@@ -651,12 +718,15 @@ export class PrismaStore implements Store {
     const ledgerExpenses = expenses
       .map(toLedgerExpense)
       .map((expense) =>
-        redistributeExpenseForActiveRoster(expense, departedMemberships, activeMemberIds)
+        pruneZeroMoneyEntriesFromLedgerExpense(
+          redistributeExpenseForActiveRoster(expense, departedMemberships, activeMemberIds)
+        )
       );
-    const activeSettlements = settlements.filter(
-      (settlement) =>
-        activeMemberIds.includes(settlement.fromUserId) &&
-        activeMemberIds.includes(settlement.toUserId)
+    const ledgerSettlements = settlements.map(toLedgerSettlement);
+    const settlementEffects = ledgerSettlements.map((settlement) =>
+      pruneZeroMoneyEntries(
+        redistributeSettlementForActiveRoster(settlement, departedMemberships, activeMemberIds)
+      )
     );
     const balances =
       activeMemberIds.length <= 1
@@ -666,15 +736,14 @@ export class PrismaStore implements Store {
           }))
         : deriveBalances({
             memberIds: activeMemberIds,
-            expenses: ledgerExpenses.map((expense) => ({
-              payers: expense.payers,
-              shares: expense.shares
-            })),
-            settlements: activeSettlements.map((entry) => ({
-              fromUserId: entry.fromUserId,
-              toUserId: entry.toUserId,
-              amount: entry.amount.toFixed(2)
-            }))
+            expenses: [
+              ...ledgerExpenses.map((expense) => ({
+                payers: expense.payers,
+                shares: expense.shares
+              })),
+              ...settlementEffects
+            ],
+            settlements: []
           });
 
     return {
@@ -684,7 +753,7 @@ export class PrismaStore implements Store {
       balances,
       settleUpSuggestions:
         activeMemberIds.length <= 1 ? [] : suggestSettlements(balances),
-      settlements: settlements.map(toLedgerSettlement)
+      settlements: ledgerSettlements
     };
   }
 
@@ -802,44 +871,92 @@ export class PrismaStore implements Store {
   }
 
   async removeGroupMember(groupId: string, memberId: string): Promise<GroupDetail | null> {
-    const [membership, group] = await Promise.all([
-      this.prisma.groupMembership.findUnique({
+    const { responseViewerId, removed } = await this.prisma.$transaction(async (tx) => {
+      const [membership, group] = await Promise.all([
+        tx.groupMembership.findUnique({
+          where: {
+            groupId_userId: {
+              groupId,
+              userId: memberId
+            }
+          },
+          include: {
+            user: true
+          }
+        }),
+        tx.expenseGroup.findUnique({
+          where: { id: groupId }
+        })
+      ]);
+
+      if (!membership || !group || membership.status !== "active") {
+        return { responseViewerId: null, removed: false };
+      }
+
+      const activeMemberships = await tx.groupMembership.findMany({
+        where: {
+          groupId,
+          status: "active",
+          NOT: {
+            userId: memberId
+          }
+        },
+        orderBy: {
+          createdAt: "asc"
+        }
+      });
+
+      const isOwnerRemoval = group.ownerId === memberId;
+      const replacementOwner = isOwnerRemoval ? activeMemberships[0] : null;
+
+      if (isOwnerRemoval && !replacementOwner) {
+        return { responseViewerId: null, removed: false };
+      }
+
+      await tx.groupMembership.update({
         where: {
           groupId_userId: {
             groupId,
             userId: memberId
           }
         },
-        include: {
-          user: true
+        data: {
+          status: "inactive",
+          leftAt: new Date()
         }
-      }),
-      this.prisma.expenseGroup.findUnique({
-        where: { id: groupId }
-      })
-    ]);
+      });
 
-    if (!membership || !group) {
+      if (replacementOwner) {
+        await tx.expenseGroup.update({
+          where: { id: groupId },
+          data: {
+            ownerId: replacementOwner.userId
+          }
+        });
+
+        await tx.groupMembership.update({
+          where: {
+            groupId_userId: {
+              groupId,
+              userId: replacementOwner.userId
+            }
+          },
+          data: {
+            role: "owner"
+          }
+        });
+
+        return { responseViewerId: replacementOwner.userId, removed: true };
+      }
+
+      return { responseViewerId: group.ownerId, removed: true };
+    });
+
+    if (!removed || !responseViewerId) {
       return null;
     }
 
-    const updated = await this.prisma.groupMembership.update({
-      where: {
-        groupId_userId: {
-          groupId,
-          userId: memberId
-        }
-      },
-      data: {
-        status: "inactive",
-        leftAt: new Date()
-      },
-      include: {
-        user: true
-      }
-    });
-
-    return this.getGroupDetail(groupId, group.ownerId);
+    return this.getGroupDetail(groupId, responseViewerId);
   }
 
   async deleteExpense(expenseId: string): Promise<boolean> {
