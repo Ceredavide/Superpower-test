@@ -11,7 +11,7 @@ import {
 } from "react-router-dom";
 
 import { api, ApiError } from "./api";
-import { GroupExpensesSection } from "./components/group-expenses-section";
+import { GroupLedgerSection } from "./components/group-ledger-section";
 import type { GroupDetail, GroupSummary, Invitation, User } from "./types";
 
 type SessionState = {
@@ -461,6 +461,7 @@ function GroupPage({ session, onUserChange }: AppRouteProps) {
   const [successMessage, setSuccessMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isInviting, setIsInviting] = useState(false);
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
 
   async function loadGroup() {
     setIsLoading(true);
@@ -494,6 +495,22 @@ function GroupPage({ session, onUserChange }: AppRouteProps) {
       setError(caughtError instanceof ApiError ? caughtError.message : "Unable to send that invite.");
     } finally {
       setIsInviting(false);
+    }
+  }
+
+  async function handleRemoveMember(memberId: string) {
+    setRemovingMemberId(memberId);
+    setError("");
+    setSuccessMessage("");
+
+    try {
+      const response = await api.removeGroupMember(groupId, memberId);
+      setGroup(response.group);
+      setSuccessMessage("Member removed.");
+    } catch (caughtError) {
+      setError(caughtError instanceof ApiError ? caughtError.message : "Unable to remove that member.");
+    } finally {
+      setRemovingMemberId(null);
     }
   }
 
@@ -532,6 +549,16 @@ function GroupPage({ session, onUserChange }: AppRouteProps) {
                       <strong>{member.displayName ?? member.email}</strong>
                       <span>{member.role === "owner" ? "Owner" : "Member"}</span>
                       <small>{member.email}</small>
+                      {group.role === "owner" && member.id !== currentUserId ? (
+                        <button
+                          className="secondary-button member-action-button"
+                          disabled={removingMemberId === member.id}
+                          onClick={() => void handleRemoveMember(member.id)}
+                          type="button"
+                        >
+                          {removingMemberId === member.id ? "Removing..." : "Remove member"}
+                        </button>
+                      ) : null}
                     </article>
                   ))}
                 </div>
@@ -564,7 +591,7 @@ function GroupPage({ session, onUserChange }: AppRouteProps) {
                 </section>
               ) : null}
 
-              <GroupExpensesSection currentUserId={currentUserId} group={group} />
+              <GroupLedgerSection currentUserId={currentUserId} group={group} />
             </>
           ) : null}
         </div>

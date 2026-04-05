@@ -34,7 +34,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -192,7 +193,8 @@ h2 {
   font-weight: 600;
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   border: 1px solid rgba(66, 49, 35, 0.18);
   border-radius: 16px;
@@ -200,7 +202,8 @@ h2 {
   padding: 14px 16px;
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   outline: 2px solid rgba(184, 90, 43, 0.18);
   border-color: var(--accent);
 }
@@ -327,23 +330,49 @@ h2 {
   gap: 6px;
 }
 
+.member-action-button {
+  margin-top: 8px;
+}
+
 .expense-section,
 .expense-form,
 .expense-card,
 .expense-card-header,
-.payer-breakdown {
+.payer-breakdown,
+.ledger-grid,
+.ledger-panel,
+.participant-picker,
+.participant-grid,
+.participant-card,
+.ledger-action-card,
+.ledger-stat-card {
   display: flex;
 }
 
 .expense-section,
 .expense-form,
-.expense-card {
+.expense-card,
+.ledger-grid,
+.ledger-panel,
+.participant-picker,
+.participant-grid,
+.participant-card,
+.ledger-action-card,
+.ledger-stat-card {
   flex-direction: column;
 }
 
 .expense-section,
-.expense-form {
+.expense-form,
+.ledger-panel,
+.participant-picker {
   gap: 18px;
+}
+
+.ledger-form-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .payer-row {
@@ -389,9 +418,82 @@ h2 {
   color: var(--muted);
 }
 
+.compact-heading {
+  margin-bottom: 0;
+}
+
+.compact-heading h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  letter-spacing: -0.03em;
+}
+
+.participant-grid,
+.ledger-grid {
+  gap: 16px;
+}
+
+.participant-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.participant-card,
+.ledger-panel,
+.ledger-action-card,
+.ledger-stat-card {
+  padding: 16px;
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  background: rgba(255, 248, 240, 0.9);
+}
+
+.participant-toggle {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-weight: 700;
+}
+
+.participant-toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+.ledger-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ledger-panel {
+  background: rgba(255, 251, 246, 0.72);
+}
+
+.ledger-stat-card span,
+.ledger-action-card p {
+  color: var(--muted);
+}
+
+.ledger-action-card {
+  justify-content: space-between;
+  gap: 14px;
+  align-items: start;
+}
+
+.suggestion-list,
+.settlement-history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
 @media (max-width: 960px) {
   .auth-layout,
   .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ledger-grid {
     grid-template-columns: 1fr;
   }
 
@@ -407,7 +509,8 @@ h2 {
 
 @media (max-width: 720px) {
   .payer-row,
-  .expense-card-header {
+  .expense-card-header,
+  .ledger-action-card {
     flex-direction: column;
   }
 }

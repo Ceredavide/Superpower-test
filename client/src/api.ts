@@ -1,4 +1,14 @@
-import type { ExpensePayload, GroupDetail, GroupExpense, GroupSummary, Invitation, User } from "./types";
+import type {
+  ExpensePayload,
+  GroupDetail,
+  GroupExpense,
+  GroupLedger,
+  GroupSummary,
+  Invitation,
+  LedgerExpensePayload,
+  SettlementPayload,
+  User
+} from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
@@ -70,6 +80,9 @@ export const api = {
   getGroup(groupId: string) {
     return request<{ group: GroupDetail }>(`/groups/${groupId}`);
   },
+  getGroupLedger(groupId: string) {
+    return request<GroupLedger>(`/groups/${groupId}/ledger`);
+  },
   listInvitations() {
     return request<{ invitations: Invitation[] }>("/invitations");
   },
@@ -92,16 +105,27 @@ export const api = {
   listExpenses(groupId: string) {
     return request<{ expenses: GroupExpense[] }>(`/groups/${groupId}/expenses`);
   },
-  createExpense(groupId: string, payload: ExpensePayload) {
+  createExpense(groupId: string, payload: ExpensePayload | LedgerExpensePayload) {
     return request<{ expense: GroupExpense }>(`/groups/${groupId}/expenses`, {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
-  updateExpense(expenseId: string, payload: ExpensePayload) {
+  updateExpense(expenseId: string, payload: ExpensePayload | LedgerExpensePayload) {
     return request<{ expense: GroupExpense }>(`/expenses/${expenseId}`, {
       method: "PATCH",
       body: JSON.stringify(payload)
+    });
+  },
+  createSettlement(groupId: string, payload: SettlementPayload) {
+    return request<{ settlement: GroupLedger["settlements"][number] }>(`/groups/${groupId}/settlements`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  removeGroupMember(groupId: string, memberId: string) {
+    return request<{ group: GroupDetail }>(`/groups/${groupId}/members/${memberId}/remove`, {
+      method: "POST"
     });
   },
   deleteExpense(expenseId: string) {
