@@ -1,7 +1,7 @@
 import path from "node:path";
 import { createServer } from "node:http";
 
-import { createApp } from "./app";
+import { createApp } from "./app/create-app";
 import { prisma } from "./core/db";
 import { env } from "./core/env";
 import { PrismaStore } from "./store/prisma-store";
