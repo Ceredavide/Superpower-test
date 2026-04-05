@@ -96,6 +96,16 @@ export type LedgerSettlement = {
   groupId: string;
   fromUserId: string;
   toUserId: string;
+  fromUser: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
+  toUser: {
+    id: string;
+    email: string;
+    displayName: string | null;
+  };
   amount: string;
   paidAt: string;
   createdByUserId: string;

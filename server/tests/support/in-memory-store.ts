@@ -119,12 +119,32 @@ function toLedgerMember(entry: StoredMembership, user: StoredUser): LedgerMember
   };
 }
 
-function toLedgerSettlement(entry: StoredSettlement): LedgerSettlement {
+function toLedgerSettlement(
+  entry: StoredSettlement,
+  usersById: Map<string, StoredUser>
+): LedgerSettlement {
+  const fromUser = usersById.get(entry.fromUserId);
+  const toUser = usersById.get(entry.toUserId);
+
+  if (!fromUser || !toUser) {
+    throw new Error("Settlement users must exist.");
+  }
+
   return {
     id: entry.id,
     groupId: entry.groupId,
     fromUserId: entry.fromUserId,
     toUserId: entry.toUserId,
+    fromUser: {
+      id: fromUser.id,
+      email: fromUser.email,
+      displayName: fromUser.displayName
+    },
+    toUser: {
+      id: toUser.id,
+      email: toUser.email,
+      displayName: toUser.displayName
+    },
     amount: entry.amount,
     paidAt: entry.paidAt,
     createdByUserId: entry.createdByUserId,
@@ -548,13 +568,14 @@ export class InMemoryStore implements Store {
         )
       );
 
+    const usersById = new Map(this.users.map((user) => [user.id, user]));
     const ledgerSettlements = this.settlements
       .filter((settlement) => settlement.groupId === groupId)
       .sort((left, right) => {
         const byPaidAt = left.paidAt.getTime() - right.paidAt.getTime();
         return byPaidAt !== 0 ? byPaidAt : left.createdAt.getTime() - right.createdAt.getTime();
       })
-      .map(toLedgerSettlement);
+      .map((settlement) => toLedgerSettlement(settlement, usersById));
     const settlementEffects = ledgerSettlements.map((settlement) =>
       pruneZeroMoneyEntries(
         departedMemberships.reduce<ReturnType<typeof settlementToExpenseEffect>>(
@@ -778,7 +799,7 @@ export class InMemoryStore implements Store {
     };
 
     this.settlements.push(settlement);
-    return toLedgerSettlement(settlement);
+    return toLedgerSettlement(settlement, new Map(this.users.map((user) => [user.id, user])));
   }
 
   async removeGroupMember(groupId: string, memberId: string): Promise<GroupDetail | null> {

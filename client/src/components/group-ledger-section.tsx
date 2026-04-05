@@ -191,6 +191,22 @@ function collectNameEntries(group: GroupDetail, ledger: GroupLedger | null, expe
     entries.push([member.id, member.displayName ?? member.email]);
   }
 
+  for (const settlement of ledger?.settlements ?? []) {
+    if (settlement.fromUser) {
+      entries.push([
+        settlement.fromUser.id,
+        settlement.fromUser.displayName ?? settlement.fromUser.email
+      ]);
+    }
+
+    if (settlement.toUser) {
+      entries.push([
+        settlement.toUser.id,
+        settlement.toUser.displayName ?? settlement.toUser.email
+      ]);
+    }
+  }
+
   for (const expense of expenses) {
     entries.push([expense.createdBy.id, expense.createdBy.displayName ?? expense.createdBy.email]);
 

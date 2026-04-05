@@ -60,6 +60,15 @@ type MembershipWithUser = Prisma.GroupMembershipGetPayload<{
   };
 }>;
 
+const settlementInclude = {
+  fromUser: true,
+  toUser: true
+} satisfies Prisma.SettlementInclude;
+
+type SettlementWithUsers = Prisma.SettlementGetPayload<{
+  include: typeof settlementInclude;
+}>;
+
 function toGroupSummary(entry: {
   role: "owner" | "member";
   group: {
@@ -238,22 +247,22 @@ function toLedgerMember(entry: {
   };
 }
 
-function toLedgerSettlement(entry: {
-  id: string;
-  groupId: string;
-  fromUserId: string;
-  toUserId: string;
-  amount: Decimal;
-  paidAt: Date;
-  createdByUserId: string;
-  createdAt: Date;
-  updatedAt: Date;
-}): LedgerSettlement {
+function toLedgerSettlement(entry: SettlementWithUsers): LedgerSettlement {
   return {
     id: entry.id,
     groupId: entry.groupId,
     fromUserId: entry.fromUserId,
     toUserId: entry.toUserId,
+    fromUser: {
+      id: entry.fromUser.id,
+      email: entry.fromUser.email,
+      displayName: entry.fromUser.displayName
+    },
+    toUser: {
+      id: entry.toUser.id,
+      email: entry.toUser.email,
+      displayName: entry.toUser.displayName
+    },
     amount: entry.amount.toFixed(2),
     paidAt: entry.paidAt,
     createdByUserId: entry.createdByUserId,
@@ -693,6 +702,7 @@ export class PrismaStore implements Store {
       }),
       this.prisma.settlement.findMany({
         where: { groupId },
+        include: settlementInclude,
         orderBy: [{ paidAt: "asc" }, { createdAt: "asc" }]
       })
     ]);
@@ -864,7 +874,8 @@ export class PrismaStore implements Store {
         amount: new Decimal(normalizeMoneyInput(input.amount)),
         paidAt: input.paidAt,
         createdByUserId: input.createdByUserId
-      }
+      },
+      include: settlementInclude
     });
 
     return toLedgerSettlement(settlement);

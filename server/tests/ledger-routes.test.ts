@@ -120,6 +120,56 @@ describe("ledger routes", () => {
     expect(outsiderResponse.body.error).toBe("Only group members can view the ledger.");
   });
 
+  test("preserves settlement actor names after a member has already been removed", async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ store });
+    const owner = await registerMember(app, "owner@example.com", "Morgan");
+    const removedMember = await registerMember(app, "member@example.com", "Avery");
+    const activeMember = await registerMember(app, "active@example.com", "Jules");
+    const groupId = await createGroup(app, owner.cookie, "Weekend House");
+
+    await addMemberToGroup(store, groupId, owner.userId, removedMember.userId);
+    await addMemberToGroup(store, groupId, owner.userId, activeMember.userId);
+
+    await store.createSettlement({
+      groupId,
+      fromUserId: removedMember.userId,
+      toUserId: owner.userId,
+      amount: "5.00",
+      paidAt: new Date("2026-04-09T09:30:00.000Z"),
+      createdByUserId: owner.userId
+    });
+
+    await store.removeGroupMember(groupId, removedMember.userId);
+
+    const ledgerResponse = await request(app)
+      .get(`/groups/${groupId}/ledger`)
+      .set("Cookie", owner.cookie);
+
+    expect(ledgerResponse.status).toBe(200);
+    expect(ledgerResponse.body.members).toEqual([
+      expect.objectContaining({ id: owner.userId }),
+      expect.objectContaining({ id: activeMember.userId })
+    ]);
+    expect(ledgerResponse.body.settlements).toEqual([
+      expect.objectContaining({
+        fromUserId: removedMember.userId,
+        toUserId: owner.userId,
+        amount: "5.00",
+        fromUser: {
+          id: removedMember.userId,
+          email: "member@example.com",
+          displayName: "Avery"
+        },
+        toUser: {
+          id: owner.userId,
+          email: "owner@example.com",
+          displayName: "Morgan"
+        }
+      })
+    ]);
+  });
+
   test("validates percentage and exact split payloads with ledger normalization rules", async () => {
     const store = new InMemoryStore();
     const app = createApp({ store });

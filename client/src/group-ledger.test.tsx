@@ -237,6 +237,67 @@ describe("group ledger", () => {
     expect(within(history).getByText("2026-04-10")).toBeInTheDocument();
   });
 
+  test("renders removed member names in settlement history on a fresh load", async () => {
+    installFetchMock([
+      {
+        path: "/auth/me",
+        body: { user: { id: "user_1", email: "owner@example.com", displayName: "Morgan" } }
+      },
+      { path: "/groups/group_1", body: buildGroupResponse(["user_1", "user_3"]) },
+      {
+        path: "/groups/group_1/ledger",
+        body: buildLedgerResponse({
+          members: [
+            {
+              id: "user_1",
+              email: "owner@example.com",
+              displayName: "Morgan",
+              status: "active",
+              leftAt: null
+            },
+            {
+              id: "user_3",
+              email: "third@example.com",
+              displayName: "Jules",
+              status: "active",
+              leftAt: null
+            }
+          ],
+          settlements: [
+            {
+              id: "settlement_removed",
+              groupId: "group_1",
+              fromUserId: "user_2",
+              toUserId: "user_1",
+              amount: "5.00",
+              paidAt: "2026-04-11T09:30:00.000Z",
+              createdByUserId: "user_1",
+              createdAt: "2026-04-11T09:30:00.000Z",
+              updatedAt: "2026-04-11T09:30:00.000Z",
+              fromUser: {
+                id: "user_2",
+                email: "member@example.com",
+                displayName: "Avery"
+              },
+              toUser: {
+                id: "user_1",
+                email: "owner@example.com",
+                displayName: "Morgan"
+              }
+            }
+          ]
+        })
+      },
+      { path: "/groups/group_1/expenses", body: { expenses: [] } }
+    ]);
+
+    render(<App />);
+
+    const history = await screen.findByRole("list", { name: "Settlement history" });
+    expect(within(history).getByText("Avery paid Morgan 5.00")).toBeInTheDocument();
+    expect(within(history).queryByText("user_2 paid Morgan 5.00")).not.toBeInTheDocument();
+  });
+
   test("records a settle-up suggestion and refreshes the ledger history", async () => {
     const { requests } = installFetchMock([
       {
